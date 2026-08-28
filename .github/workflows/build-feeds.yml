@@ -1,0 +1,54 @@
+name: Build RSS feeds
+
+on:
+  schedule:
+    - cron: "27 * * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - pawchive_feed.py
+      - royalroad_feed.py
+      - requirements.txt
+      - .github/workflows/build-feeds.yml
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v6
+      - name: Build feeds
+        env:
+          PAWCHIVE_SITE_BASE_URL: "${{ steps.pages.outputs.base_url }}"
+          PAWCHIVE_SESSION: "${{ secrets.PAWCHIVE_SESSION }}"
+        run: python pawchive_feed.py
+      - name: Build Royal Road feeds
+        env:
+          ROYALROAD_SITE_BASE_URL: "${{ steps.pages.outputs.base_url }}"
+        run: python royalroad_feed.py
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: public
+      # deploy-pages@v5 still bundles a dependency that imports Node's removed
+      # punycode API (actions/deploy-pages#434). Suppress that action-internal
+      # deprecation until upstream publishes a fixed release.
+      - uses: actions/deploy-pages@v5
+        env:
+          NODE_OPTIONS: --no-deprecation

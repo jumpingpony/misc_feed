@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>Royal Road fiction feeds (unofficial)</title>
+  </head>
+  <body>
+    <outline text="Royal Road fiction" title="Royal Road fiction">
+      <outline type="rss" text="Zenith of Sorcery — Royal Road" title="Zenith of Sorcery — Royal Road" xmlUrl="https://nappingcats.github.io/misc_feed/zenith-of-sorcery/feed.xml" htmlUrl="https://www.royalroad.com/fiction/71045/zenith-of-sorcery"/>
+    </outline>
+  </body>
+</opml>

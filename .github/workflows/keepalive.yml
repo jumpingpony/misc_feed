@@ -1,0 +1,39 @@
+name: Keepalive
+
+on:
+  schedule:
+    - cron: "0 0 1,15 * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force commit"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Auto-commit if inactive
+        env:
+          FORCE_COMMIT: "${{ inputs.force || (github.event_name == 'workflow_dispatch') }}"
+        run: |
+          # Calculate days since last commit
+          LAST_COMMIT_TS=$(git log -1 --format=%ct)
+          NOW_TS=$(date +%s)
+          DIFF_DAYS=$(( (NOW_TS - LAST_COMMIT_TS) / 86400 ))
+
+          # Commit if forced or last commit is older than 45 days
+          if [ "${FORCE_COMMIT}" = "true" ] || [ "${DIFF_DAYS}" -ge 45 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "Keep repository active"
+            git push
+          fi
