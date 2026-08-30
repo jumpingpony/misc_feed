@@ -2,7 +2,7 @@ name: Build RSS feeds
 
 on:
   schedule:
-    - cron: "27 * * * *"
+    - cron: "27 */4 * * *"
   workflow_dispatch: {}
   push:
     branches: [main]
