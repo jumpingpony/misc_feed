@@ -12,7 +12,6 @@ archived by Pawchive:
 | Feed | Creator | GitHub Pages |
 |------|---------|--------------|
 | cerim | Patreon `31891971` | [feed.xml](https://jumpingpony.github.io/misc_feed/cerim/feed.xml) |
-| laughyeamer | Patreon `143885136` | [feed.xml](https://jumpingpony.github.io/misc_feed/laughyeamer/feed.xml) |
 
 Post discovery and complete post objects come from the
 [Pawchive v1 API](https://pawchive.pw/api/schema). Chapter extraction uses the
@@ -65,7 +64,6 @@ python3 pawchive_feed.py --skip-patreon-sync
 Output:
 
 - `public/cerim/feed.xml`
-- `public/laughyeamer/feed.xml`
 
 ## Configuration
 

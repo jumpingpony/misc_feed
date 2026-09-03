@@ -49,12 +49,6 @@ FEEDS = [
         "campaign_id": "10143762",
         "fallback_name": "cerim",
     },
-    {
-        "key": "laughyeamer",
-        "creator_id": "143885136",
-        "campaign_id": "13995832",
-        "fallback_name": "LaughYeAmer",
-    },
 ]
 
 ITEM_LIMIT = max(1, int(os.environ.get("PAWCHIVE_MAX_ITEMS", "10")))
