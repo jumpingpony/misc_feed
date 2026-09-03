@@ -5,11 +5,11 @@
   </head>
   <body>
     <outline text="Pawchive Patreon" title="Pawchive Patreon">
-      <outline type="rss" text="cerim — Pawchive" title="cerim — Pawchive" xmlUrl="https://nappingcats.github.io/misc_feed/cerim/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/31891971"/>
-      <outline type="rss" text="LaughYeAmer — Pawchive" title="LaughYeAmer — Pawchive" xmlUrl="https://nappingcats.github.io/misc_feed/laughyeamer/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/143885136"/>
+      <outline type="rss" text="cerim — Pawchive" title="cerim — Pawchive" xmlUrl="https://jumpingpony.github.io/misc_feed/cerim/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/31891971"/>
+      <outline type="rss" text="LaughYeAmer — Pawchive" title="LaughYeAmer — Pawchive" xmlUrl="https://jumpingpony.github.io/misc_feed/laughyeamer/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/143885136"/>
     </outline>
     <outline text="Royal Road fiction" title="Royal Road fiction">
-      <outline type="rss" text="Zenith of Sorcery — Royal Road" title="Zenith of Sorcery — Royal Road" xmlUrl="https://nappingcats.github.io/misc_feed/zenith-of-sorcery/feed.xml" htmlUrl="https://www.royalroad.com/fiction/71045/zenith-of-sorcery"/>
+      <outline type="rss" text="Zenith of Sorcery — Royal Road" title="Zenith of Sorcery — Royal Road" xmlUrl="https://jumpingpony.github.io/misc_feed/zenith-of-sorcery/feed.xml" htmlUrl="https://www.royalroad.com/fiction/71045/zenith-of-sorcery"/>
     </outline>
   </body>
 </opml>

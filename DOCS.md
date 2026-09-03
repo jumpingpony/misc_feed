@@ -11,8 +11,8 @@ archived by Pawchive:
 
 | Feed | Creator | GitHub Pages |
 |------|---------|--------------|
-| cerim | Patreon `31891971` | [feed.xml](https://nappingcats.github.io/misc_feed/cerim/feed.xml) |
-| laughyeamer | Patreon `143885136` | [feed.xml](https://nappingcats.github.io/misc_feed/laughyeamer/feed.xml) |
+| cerim | Patreon `31891971` | [feed.xml](https://jumpingpony.github.io/misc_feed/cerim/feed.xml) |
+| laughyeamer | Patreon `143885136` | [feed.xml](https://jumpingpony.github.io/misc_feed/laughyeamer/feed.xml) |
 
 Post discovery and complete post objects come from the
 [Pawchive v1 API](https://pawchive.pw/api/schema). Chapter extraction uses the
@@ -33,7 +33,7 @@ For `cerim` (Patreon `31891971`):
 - **Active Schedule**: 5 days a week (**Sunday through Thursday**).
 - **Publication Times**: Typically between **08:00 – 09:30 UTC** (**13:30 – 15:00 IST**), averaging around **08:35 UTC / 14:05 IST**.
 
-During each hourly build run, `pawchive_feed.py` automatically checks Patreon's public API for newly published posts. If a newer post exists on Patreon that has not yet been ingested by Pawchive, it performs a **polite check-before-set** re-import request:
+During each build run (scheduled every 4 hours), `pawchive_feed.py` automatically checks Patreon's public API for newly published posts. If a newer post exists on Patreon that has not yet been ingested by Pawchive, it performs a **polite check-before-set** re-import request:
 1. Queries `GET /api/v1/patreon/user/{creator_id}/post/{post_id}/flag`.
 2. If already flagged, it skips politely without making write requests.
 3. If unflagged, it sends `POST /api/v1/patreon/user/{creator_id}/post/{post_id}/flag` using the session cookie.
@@ -78,7 +78,7 @@ Output:
 | `PAWCHIVE_SITE_BASE_URL` | unset | Deployed site root used for RSS self-links |
 | `PAWCHIVE_SESSION` | hardcoded session | Pawchive login session cookie used for authenticated flag requests |
 
-The GitHub Actions workflow runs hourly and deploys `public/` to GitHub
+The GitHub Actions workflow runs every 4 hours and deploys `public/` to GitHub
 Pages. Importable feed collections are available in `OPML/`.
 
 ## Royal Road fiction feeds
@@ -88,7 +88,7 @@ story:
 
 | Feed | Author | GitHub Pages |
 |------|--------|--------------|
-| Zenith of Sorcery | nobody103 | [feed.xml](https://nappingcats.github.io/misc_feed/zenith-of-sorcery/feed.xml) |
+| Zenith of Sorcery | nobody103 | [feed.xml](https://jumpingpony.github.io/misc_feed/zenith-of-sorcery/feed.xml) |
 
 Royal Road's official syndication feeds truncate chapter bodies. The builder
 uses them only to discover the newest 10 chapters, then extracts complete
