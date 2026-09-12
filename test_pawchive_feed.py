@@ -29,9 +29,17 @@ class PawchiveFeedTests(unittest.TestCase):
 
     def test_feed_defs_unique(self):
         # Verify feed configurations contain unique keys and creator IDs.
-        self.assertEqual(1, len(feed.FEEDS))
-        self.assertEqual(1, len({item["key"] for item in feed.FEEDS}))
-        self.assertEqual(1, len({item["creator_id"] for item in feed.FEEDS}))
+        self.assertEqual(4, len(feed.FEEDS))
+        self.assertEqual(4, len({item["key"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["creator_id"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["campaign_id"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["title"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["author"] for item in feed.FEEDS}))
+
+    def test_feed_title_format(self):
+        # Verify feed title follows 'novel title - Author' format.
+        for item in feed.FEEDS:
+            self.assertEqual(f"{item['title']} - {item['author']}", feed.feed_title(item))
 
     def test_build_chapter_body_only(self):
         # Verify chapter builder sanitizes HTML, strips navigation, and keeps author notes.

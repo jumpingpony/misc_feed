@@ -48,6 +48,32 @@ FEEDS = [
         "creator_id": "31891971",
         "campaign_id": "10143762",
         "fallback_name": "cerim",
+        "title": "Hell Difficulty Tutorial",
+        "author": "Cerim",
+    },
+    {
+        "key": "scyzim",
+        "creator_id": "76415047",
+        "campaign_id": "16194266",
+        "fallback_name": "Scyzim",
+        "title": "Nuclear Son",
+        "author": "Scyzim",
+    },
+    {
+        "key": "void-herald",
+        "creator_id": "16493499",
+        "campaign_id": "2369856",
+        "fallback_name": "Void Herald",
+        "title": "The Hundred Reigns",
+        "author": "Void Herald",
+    },
+    {
+        "key": "laughyeamer",
+        "creator_id": "143885136",
+        "campaign_id": "13995832",
+        "fallback_name": "LaughYeAmer",
+        "title": "Godless Sword",
+        "author": "LaughYeAmer",
     },
 ]
 
@@ -555,6 +581,16 @@ def merge_new_posts(
     return dict(ordered[:ITEM_LIMIT]), rendered, evicted
 
 
+# Format feed title as 'novel title - Author'.
+def feed_title(feed: dict) -> str:
+    title = feed.get("title")
+    author = feed.get("author") or feed.get("fallback_name")
+    if title and author:
+        return f"{title} - {author}"
+
+    return title or author or ""
+
+
 def build_feed_xml(feed: dict, name: str, items: dict[str, tuple[dt.datetime, str]]) -> str:
     """Construct a full RSS 2.0 XML feed document.
 
@@ -571,8 +607,8 @@ def build_feed_xml(feed: dict, name: str, items: dict[str, tuple[dt.datetime, st
 
     # Build channel metadata and optional self-referencing atom:link header.
     creator_url = f"{BASE}/patreon/user/{feed['creator_id']}"
-    title = f"{name} — Pawchive"
-    description = f"Unofficial full-text feed of {name}'s Patreon posts archived by Pawchive."
+    title = feed_title(feed) or f"{name} — Pawchive"
+    description = f"Unofficial full-text feed for {title} archived by Pawchive."
     self_link = (
         f'    <atom:link href="{escape(SITE_BASE_URL + "/" + feed["key"] + "/feed.xml")}" '
         'rel="self" type="application/rss+xml" />\n'
@@ -614,10 +650,11 @@ def write_feed(feed: dict, name: str, xml: str, count: int) -> None:
     (directory / "feed.xml").write_text(xml, encoding="utf-8")
 
     # Generate and write companion index.html landing page.
+    title = feed_title(feed) or f"{name} — Pawchive"
     page = (
         "<!doctype html><meta charset='utf-8'>"
-        f"<title>{html.escape(name)} — Pawchive RSS</title>"
-        f"<h1>{html.escape(name)} — Pawchive RSS</h1>"
+        f"<title>{html.escape(title)} — Pawchive RSS</title>"
+        f"<h1>{html.escape(title)} — Pawchive RSS</h1>"
         "<p>Unofficial full-text feed generated from the Pawchive API.</p>"
         "<p><a href='feed.xml'>Subscribe to feed.xml</a></p>"
         f"<p>{count} items.</p>"
@@ -924,7 +961,7 @@ def run_feed(
         Number of items retained in the final feed.
     """
     name = feed["fallback_name"]
-    print(f"[{feed['key']}] {name}")
+    print(f"[{feed['key']}] {feed_title(feed) or name}")
 
     # Load existing historical items and fetch latest creator posts from Pawchive.
     existing = load_existing(session, feed)
@@ -1044,7 +1081,7 @@ def main(argv: list[str] | None = None) -> int:
     # Write root index.html listing links to all generated feed endpoints.
     links = "".join(
         f"<li><a href='{html.escape(feed['key'])}/feed.xml'>"
-        f"{html.escape(feed['fallback_name'])}</a></li>"
+        f"{html.escape(feed_title(feed) or feed['fallback_name'])}</a></li>"
         for feed in FEEDS
     )
     (OUT_DIR / "index.html").write_text(

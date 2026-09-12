@@ -475,6 +475,16 @@ def merge_new_chapters(
     return ordered[:ITEM_LIMIT], fetched, evicted
 
 
+# Format feed title as 'novel title - Author'.
+def feed_title(feed: dict) -> str:
+    title = feed.get("title")
+    author = feed.get("author")
+    if title and author:
+        return f"{title} - {author}"
+
+    return title or author or ""
+
+
 def build_feed_xml(feed: dict, chapters: list[dict]) -> str:
     """Assemble complete RSS 2.0 XML string for fiction channel.
 
@@ -493,6 +503,7 @@ def build_feed_xml(feed: dict, chapters: list[dict]) -> str:
         if SITE_BASE_URL
         else ""
     )
+    title = feed_title(feed)
     description = f"Unofficial full-text feed of {feed['title']} by {feed['author']} on Royal Road."
 
     # Assemble complete RSS document.
@@ -501,7 +512,7 @@ def build_feed_xml(feed: dict, chapters: list[dict]) -> str:
         '<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" '
         'xmlns:atom="http://www.w3.org/2005/Atom">\n'
         "  <channel>\n"
-        f"    <title>{escape(feed['title'])} — Royal Road</title>\n"
+        f"    <title>{escape(title)}</title>\n"
         f"    <link>{escape(fiction_url(feed))}</link>\n"
         f"    <description>{escape(description)}</description>\n"
         "    <language>en</language>\n"
@@ -528,10 +539,11 @@ def write_feed(feed: dict, xml: str, count: int) -> None:
     (directory / "feed.xml").write_text(xml, encoding="utf-8")
 
     # Write HTML index page.
+    title = feed_title(feed)
     page = (
         "<!doctype html><meta charset='utf-8'>"
-        f"<title>{html.escape(feed['title'])} — Royal Road RSS</title>"
-        f"<h1>{html.escape(feed['title'])} — Royal Road RSS</h1>"
+        f"<title>{html.escape(title)} — Royal Road RSS</title>"
+        f"<h1>{html.escape(title)} — Royal Road RSS</h1>"
         "<p>Unofficial full-text feed generated from Royal Road.</p>"
         "<p><a href='feed.xml'>Subscribe to feed.xml</a></p>"
         f"<p>{count} items.</p>"
@@ -556,6 +568,8 @@ def is_royalroad_feed_dir(path: Path) -> bool:
     if feed_file.is_file():
         try:
             content = feed_file.read_text(encoding="utf-8", errors="replace")
+            if "pawchive.pw" in content:
+                return False
             if "royalroad.com" in content or "Royal Road" in content:
                 return True
         except OSError:
@@ -566,6 +580,8 @@ def is_royalroad_feed_dir(path: Path) -> bool:
     if index_file.is_file():
         try:
             content = index_file.read_text(encoding="utf-8", errors="replace")
+            if "Pawchive" in content:
+                return False
             if "Royal Road" in content:
                 return True
         except OSError:
@@ -610,7 +626,7 @@ def run_feed(session: requests.Session, feed: dict) -> int:
     Returns:
         Number of items retained in the final feed.
     """
-    print(f"[{feed['key']}] {feed['title']}")
+    print(f"[{feed['key']}] {feed_title(feed)}")
 
     # Load existing items and fetch latest syndication feed.
     existing = load_existing(session, feed)

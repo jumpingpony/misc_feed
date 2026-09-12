@@ -46,6 +46,11 @@ class RoyalRoadFeedTests(unittest.TestCase):
             chapter["body_html"] = f"<p>Body {chapter_id}</p>"
         return chapter
 
+    def test_feed_title_format(self):
+        # Verify feed title follows 'novel title - Author' format.
+        for item in feed.FEEDS:
+            self.assertEqual(f"{item['title']} - {item['author']}", feed.feed_title(item))
+
     def test_parse_syndication_limit(self):
         # Verify syndication parser limits output to maximum items and cleans title prefix.
         items = "".join(

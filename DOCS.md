@@ -9,9 +9,12 @@ top-level Python script owns one source and writes its generated files below
 `pawchive_feed.py` publishes full-text RSS 2.0 feeds for selected Patreon creators
 archived by Pawchive:
 
-| Feed | Creator | GitHub Pages |
-|------|---------|--------------|
-| cerim | Patreon `31891971` | [feed.xml](https://jumpingpony.github.io/misc_feed/cerim/feed.xml) |
+| Feed | Novel | Creator / Author | GitHub Pages |
+|------|-------|------------------|--------------|
+| cerim | Hell Difficulty Tutorial | Patreon `31891971` (Cerim) | [feed.xml](https://jumpingpony.github.io/misc_feed/cerim/feed.xml) |
+| scyzim | Nuclear Son | Patreon `76415047` (Scyzim) | [feed.xml](https://jumpingpony.github.io/misc_feed/scyzim/feed.xml) |
+| void-herald | The Hundred Reigns | Patreon `16493499` (Void Herald) | [feed.xml](https://jumpingpony.github.io/misc_feed/void-herald/feed.xml) |
+| laughyeamer | Godless Sword | Patreon `143885136` (LaughYeAmer) | [feed.xml](https://jumpingpony.github.io/misc_feed/laughyeamer/feed.xml) |
 
 Post discovery and complete post objects come from the
 [Pawchive v1 API](https://pawchive.pw/api/schema). Chapter extraction uses the
@@ -64,6 +67,9 @@ python3 pawchive_feed.py --skip-patreon-sync
 Output:
 
 - `public/cerim/feed.xml`
+- `public/scyzim/feed.xml`
+- `public/void-herald/feed.xml`
+- `public/laughyeamer/feed.xml`
 
 ## Configuration
 
@@ -84,9 +90,9 @@ Pages. Importable feed collections are available in `OPML/`.
 `royalroad_feed.py` publishes the 10 newest full chapters for one Royal Road
 story:
 
-| Feed | Author | GitHub Pages |
-|------|--------|--------------|
-| Zenith of Sorcery | nobody103 | [feed.xml](https://jumpingpony.github.io/misc_feed/zenith-of-sorcery/feed.xml) |
+| Feed | Novel | Author | GitHub Pages |
+|------|-------|--------|--------------|
+| zenith-of-sorcery | Zenith of Sorcery | nobody103 | [feed.xml](https://jumpingpony.github.io/misc_feed/zenith-of-sorcery/feed.xml) |
 
 Royal Road's official syndication feeds truncate chapter bodies. The builder
 uses them only to discover the newest 10 chapters, then extracts complete

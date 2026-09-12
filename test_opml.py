@@ -62,6 +62,16 @@ class OPMLValidationTests(unittest.TestCase):
                     f"{path.name} contains legacy owner in xmlUrl: {xml_url}",
                 )
 
+    def test_feed_titles_format(self) -> None:
+        """Verify each outline title follows 'novel title - Author' format."""
+        for path in OPML_DIR.glob("*.opml"):
+            tree = ET.parse(path)
+            for outline in tree.findall(".//outline[@xmlUrl]"):
+                title = outline.attrib.get("title", "")
+                text = outline.attrib.get("text", "")
+                self.assertIn(" - ", title, f"{path.name} has invalid title: {title}")
+                self.assertEqual(title, text)
+
 
 if __name__ == "__main__":
     unittest.main()
