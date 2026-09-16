@@ -23,9 +23,9 @@ class RoyalRoadFeedTests(unittest.TestCase):
 
     def test_feed_defs_unique(self):
         # Verify feed configurations contain unique keys and fiction IDs.
-        self.assertEqual(1, len(feed.FEEDS))
-        self.assertEqual(1, len({item["key"] for item in feed.FEEDS}))
-        self.assertEqual(1, len({item["fiction_id"] for item in feed.FEEDS}))
+        self.assertEqual(0, len(feed.FEEDS))
+        self.assertEqual(0, len({item["key"] for item in feed.FEEDS}))
+        self.assertEqual(0, len({item["fiction_id"] for item in feed.FEEDS}))
 
     @staticmethod
     def make_chapter(
@@ -48,8 +48,8 @@ class RoyalRoadFeedTests(unittest.TestCase):
 
     def test_feed_title_format(self):
         # Verify feed title follows 'novel title - Author' format.
-        for item in feed.FEEDS:
-            self.assertEqual(f"{item['title']} - {item['author']}", feed.feed_title(item))
+        test_feed = {"title": "Zenith of Sorcery", "author": "nobody103"}
+        self.assertEqual("Zenith of Sorcery - nobody103", feed.feed_title(test_feed))
 
     def test_parse_syndication_limit(self):
         # Verify syndication parser limits output to maximum items and cleans title prefix.
@@ -62,7 +62,8 @@ class RoyalRoadFeedTests(unittest.TestCase):
         document = f"<rss><channel>{items}</channel></rss>".encode()
 
         # Parse syndication feed XML.
-        chapters = feed.parse_syndication(document, feed.FEEDS[0])
+        feed_config = {"title": "Zenith of Sorcery", "author": "nobody103", "fiction_id": "71045"}
+        chapters = feed.parse_syndication(document, feed_config)
         self.assertEqual(10, len(chapters))
         self.assertEqual("Chapter 0", chapters[0]["title"])
 
@@ -115,7 +116,14 @@ class RoyalRoadFeedTests(unittest.TestCase):
         }
 
         # Build feed XML and parse root element.
-        xml = feed.build_feed_xml(feed.FEEDS[0], [chapter])
+        feed_config = {
+            "key": "zenith-of-sorcery",
+            "fiction_id": "71045",
+            "slug": "zenith-of-sorcery",
+            "title": "Zenith of Sorcery",
+            "author": "nobody103",
+        }
+        xml = feed.build_feed_xml(feed_config, [chapter])
         root = ET.fromstring(xml)
         body = root.find(f"./channel/item/{{{feed.CONTENT_NS}}}encoded")
         self.assertEqual("<p>Complete chapter.</p>", body.text)

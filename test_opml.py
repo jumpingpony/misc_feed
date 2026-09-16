@@ -44,6 +44,10 @@ class OPMLValidationTests(unittest.TestCase):
             tree = ET.parse(path)
             outlines = tree.findall(".//outline[@xmlUrl]")
 
+            if path.name == "royalroad.opml":
+                self.assertEqual(len(outlines), 0)
+                continue
+
             self.assertGreater(len(outlines), 0, f"No feed outlines in {path.name}")
 
             for outline in outlines:

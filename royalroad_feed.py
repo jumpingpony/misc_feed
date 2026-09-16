@@ -58,15 +58,7 @@ UA = (
 UTC = dt.timezone.utc
 CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
 
-FEEDS = [
-    {
-        "key": "zenith-of-sorcery",
-        "fiction_id": "71045",
-        "slug": "zenith-of-sorcery",
-        "title": "Zenith of Sorcery",
-        "author": "nobody103",
-    },
-]
+FEEDS: list[dict[str, str]] = []
 
 ITEM_LIMIT = max(1, int(os.environ.get("ROYALROAD_MAX_ITEMS", "10")))
 TIMEOUT = max(1, int(os.environ.get("ROYALROAD_TIMEOUT", "30")))

@@ -6,12 +6,7 @@
   <body>
     <outline text="Pawchive Patreon" title="Pawchive Patreon">
       <outline type="rss" text="Hell Difficulty Tutorial - Cerim" title="Hell Difficulty Tutorial - Cerim" xmlUrl="https://jumpingpony.github.io/misc_feed/cerim/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/31891971"/>
-      <outline type="rss" text="Nuclear Son - Scyzim" title="Nuclear Son - Scyzim" xmlUrl="https://jumpingpony.github.io/misc_feed/scyzim/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/76415047"/>
       <outline type="rss" text="The Hundred Reigns - Void Herald" title="The Hundred Reigns - Void Herald" xmlUrl="https://jumpingpony.github.io/misc_feed/void-herald/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/16493499"/>
-      <outline type="rss" text="Godless Sword - LaughYeAmer" title="Godless Sword - LaughYeAmer" xmlUrl="https://jumpingpony.github.io/misc_feed/laughyeamer/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/143885136"/>
-    </outline>
-    <outline text="Royal Road fiction" title="Royal Road fiction">
-      <outline type="rss" text="Zenith of Sorcery - nobody103" title="Zenith of Sorcery - nobody103" xmlUrl="https://jumpingpony.github.io/misc_feed/zenith-of-sorcery/feed.xml" htmlUrl="https://www.royalroad.com/fiction/71045/zenith-of-sorcery"/>
     </outline>
   </body>
 </opml>

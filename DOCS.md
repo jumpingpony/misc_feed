@@ -12,9 +12,7 @@ archived by Pawchive:
 | Feed | Novel | Creator / Author | GitHub Pages |
 |------|-------|------------------|--------------|
 | cerim | Hell Difficulty Tutorial | Patreon `31891971` (Cerim) | [feed.xml](https://jumpingpony.github.io/misc_feed/cerim/feed.xml) |
-| scyzim | Nuclear Son | Patreon `76415047` (Scyzim) | [feed.xml](https://jumpingpony.github.io/misc_feed/scyzim/feed.xml) |
 | void-herald | The Hundred Reigns | Patreon `16493499` (Void Herald) | [feed.xml](https://jumpingpony.github.io/misc_feed/void-herald/feed.xml) |
-| laughyeamer | Godless Sword | Patreon `143885136` (LaughYeAmer) | [feed.xml](https://jumpingpony.github.io/misc_feed/laughyeamer/feed.xml) |
 
 Post discovery and complete post objects come from the
 [Pawchive v1 API](https://pawchive.pw/api/schema). Chapter extraction uses the
@@ -67,9 +65,7 @@ python3 pawchive_feed.py --skip-patreon-sync
 Output:
 
 - `public/cerim/feed.xml`
-- `public/scyzim/feed.xml`
 - `public/void-herald/feed.xml`
-- `public/laughyeamer/feed.xml`
 
 ## Configuration
 
@@ -87,12 +83,10 @@ Pages. Importable feed collections are available in `OPML/`.
 
 ## Royal Road fiction feeds
 
-`royalroad_feed.py` publishes the 10 newest full chapters for one Royal Road
-story:
+`royalroad_feed.py` publishes full-text RSS feeds for selected Royal Road
+fiction.
 
-| Feed | Novel | Author | GitHub Pages |
-|------|-------|--------|--------------|
-| zenith-of-sorcery | Zenith of Sorcery | nobody103 | [feed.xml](https://jumpingpony.github.io/misc_feed/zenith-of-sorcery/feed.xml) |
+Currently no Royal Road feeds are configured.
 
 Royal Road's official syndication feeds truncate chapter bodies. The builder
 uses them only to discover the newest 10 chapters, then extracts complete
@@ -107,8 +101,7 @@ are fetched and rendered. The item cap is applied after merging, so new chapters
 displace the oldest retained chapters only. The first backfill spaces chapter
 requests one second apart.
 
-Run locally with `python3 royalroad_feed.py`; output is written to
-`public/zenith-of-sorcery/feed.xml`.
+Run locally with `python3 royalroad_feed.py`.
 
 Royal Road configuration:
 

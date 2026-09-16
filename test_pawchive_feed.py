@@ -29,12 +29,12 @@ class PawchiveFeedTests(unittest.TestCase):
 
     def test_feed_defs_unique(self):
         # Verify feed configurations contain unique keys and creator IDs.
-        self.assertEqual(4, len(feed.FEEDS))
-        self.assertEqual(4, len({item["key"] for item in feed.FEEDS}))
-        self.assertEqual(4, len({item["creator_id"] for item in feed.FEEDS}))
-        self.assertEqual(4, len({item["campaign_id"] for item in feed.FEEDS}))
-        self.assertEqual(4, len({item["title"] for item in feed.FEEDS}))
-        self.assertEqual(4, len({item["author"] for item in feed.FEEDS}))
+        self.assertEqual(2, len(feed.FEEDS))
+        self.assertEqual(2, len({item["key"] for item in feed.FEEDS}))
+        self.assertEqual(2, len({item["creator_id"] for item in feed.FEEDS}))
+        self.assertEqual(2, len({item["campaign_id"] for item in feed.FEEDS}))
+        self.assertEqual(2, len({item["title"] for item in feed.FEEDS}))
+        self.assertEqual(2, len({item["author"] for item in feed.FEEDS}))
 
     def test_feed_title_format(self):
         # Verify feed title follows 'novel title - Author' format.

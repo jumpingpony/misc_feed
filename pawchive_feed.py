@@ -52,28 +52,12 @@ FEEDS = [
         "author": "Cerim",
     },
     {
-        "key": "scyzim",
-        "creator_id": "76415047",
-        "campaign_id": "16194266",
-        "fallback_name": "Scyzim",
-        "title": "Nuclear Son",
-        "author": "Scyzim",
-    },
-    {
         "key": "void-herald",
         "creator_id": "16493499",
         "campaign_id": "2369856",
         "fallback_name": "Void Herald",
         "title": "The Hundred Reigns",
         "author": "Void Herald",
-    },
-    {
-        "key": "laughyeamer",
-        "creator_id": "143885136",
-        "campaign_id": "13995832",
-        "fallback_name": "LaughYeAmer",
-        "title": "Godless Sword",
-        "author": "LaughYeAmer",
     },
 ]
 
