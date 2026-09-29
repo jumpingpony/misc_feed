@@ -52,13 +52,16 @@ python3 pawchive_feed.py
 python3 pawchive_feed.py --check-flag 167183185
 python3 pawchive_feed.py --check-flag https://www.patreon.com/cerim/posts/167183185
 
-# Check Patreon for newer posts and politely flag any missing ones
+# Check Patreon for newer posts and politely flag any missing ones (also checks cum.st)
 python3 pawchive_feed.py --check-patreon
+
+# Check cum.st for newer posts
+python3 pawchive_feed.py --check-cumst
 
 # Explicitly check-and-flag a specific post or URL
 python3 pawchive_feed.py --flag 167183185
 
-# Build feeds without checking Patreon
+# Build feeds without checking Patreon and cum.st
 python3 pawchive_feed.py --skip-patreon-sync
 ```
 

@@ -68,7 +68,7 @@ class PawchiveFeedTests(unittest.TestCase):
         self.assertIn("<p>Hello <em>world</em>.", body)
         self.assertNotIn("bad()", body)
         self.assertIn("&lt;foo&gt;x&lt;/foo&gt;", body)
-        self.assertIn('href="https://pawchive.pw/map"', body)
+        self.assertIn('href="https://www.patreon.com/map"', body)
         self.assertNotIn("Previous Chapter", body)
         self.assertNotIn("Next chapter", body)
         self.assertIn("Author Note: buy the book.", body)
@@ -385,6 +385,159 @@ class PawchiveFeedTests(unittest.TestCase):
             self.assertFalse(untracked_pawchive.exists())
             self.assertTrue(other_dir.exists())
 
+    def test_parse_date_numeric(self):
+        # Verify parse_date accepts integer and float unix timestamps.
+        ts = 1790585982
+        parsed = feed.parse_date(ts)
+        self.assertEqual(dt.datetime(2026, 9, 28, 8, 59, 42, tzinfo=dt.timezone.utc), parsed)
+
+    def test_get_latest_cumst_posts(self):
+        # Verify fetching and parsing posts from cum.st API.
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: {
+                "posts": [
+                    {
+                        "id": "170881051",
+                        "title": "Chapter 938 - The Wraith",
+                        "published": 1790671008,
+                        "added": 1790675000,
+                    }
+                ]
+            },
+        )
+
+        posts = feed.get_latest_cumst_posts(session, "10143762", count=5)
+        self.assertEqual(1, len(posts))
+        self.assertEqual("170881051", posts[0]["id"])
+        self.assertEqual("Chapter 938 - The Wraith", posts[0]["title"])
+        self.assertEqual("https://cum.st/patreon/user/10143762/post/170881051", posts[0]["url"])
+        session.get.assert_called_once_with(
+            "https://cum.st/api/v1/patreon/user/10143762/posts?limit=5",
+            timeout=feed.TIMEOUT,
+        )
+
+    def test_check_cumst_posts_detects_newer(self):
+        # Verify check_cumst_posts identifies posts newer than newest retained item.
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: {
+                "posts": [
+                    {
+                        "id": "300",
+                        "title": "New cum.st Chapter",
+                        "published": 1787260800,
+                    },
+                    {
+                        "id": "299",
+                        "title": "Old cum.st Chapter",
+                        "published": 1787174400,
+                    },
+                ]
+            },
+        )
+        feed_config = {
+            "key": "cerim",
+            "campaign_id": "10143762",
+            "creator_id": "31891971",
+        }
+        newest_date = dt.datetime(2026, 8, 20, 0, 0, 0, tzinfo=dt.timezone.utc)
+
+        # 1787260800 is 2026-08-21 00:00:00 UTC (newer)
+        # 1787174400 is 2026-08-20 00:00:00 UTC (not newer)
+        newer = feed.check_cumst_posts(session, feed_config, newest_date)
+        self.assertEqual(1, len(newer))
+        self.assertEqual("300", newer[0]["id"])
+
+    def test_check_cumst_skips_known(self):
+        # Verify check_cumst_posts skips posts present in known imported IDs.
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: {
+                "posts": [
+                    {
+                        "id": "300",
+                        "title": "Already Known Chapter",
+                        "published": 1787260800,
+                    }
+                ]
+            },
+        )
+        feed_config = {
+            "key": "cerim",
+            "campaign_id": "10143762",
+            "creator_id": "31891971",
+        }
+        newest_date = dt.datetime(2026, 8, 19, 0, 0, 0, tzinfo=dt.timezone.utc)
+        known_imported_ids = {"300"}
+
+        newer = feed.check_cumst_posts(
+            session, feed_config, newest_date, known_imported_ids=known_imported_ids
+        )
+        self.assertEqual(0, len(newer))
+
+    def test_check_cumst_cli(self):
+        # Verify --check-cumst CLI argument invokes check_cumst_posts on all feeds.
+        with patch("pawchive_feed.check_cumst_posts", return_value=[]) as mock_check, \
+             patch("pawchive_feed.load_existing", return_value={}):
+            ret = feed.main(["--check-cumst"])
+            self.assertEqual(0, ret)
+            self.assertEqual(len(feed.FEEDS), mock_check.call_count)
+
+    def test_item_links_direct_to_patreon(self):
+        # Verify item link and guid direct to canonical Patreon chapter URL.
+        post = self.make_post(938, 29)
+        rendered = feed.render_item(post)
+        expected_url = "https://www.patreon.com/posts/938"
+
+        self.assertIn(f"<link>{expected_url}</link>", rendered)
+        self.assertIn(f'<guid isPermaLink="true">{expected_url}</guid>', rendered)
+
+    def test_cumst_first_then_pawchive_dedup(self):
+        # Verify post first imported from cum.st is not duplicated when later seen on Pawchive.
+        cumst_post = {
+            "id": "938",
+            "title": "Chapter 938 - The Wraith",
+            "published": "2026-09-29T08:36:48",
+            "content": "<p>Content from cum.st</p>",
+            "user": "31891971",
+            "service": "patreon",
+            "url": "https://www.patreon.com/posts/938",
+        }
+
+        # Step 1: Render feed containing post from cum.st.
+        items, rendered_count, _ = feed.merge_new_posts({}, [cumst_post])
+        self.assertEqual(1, rendered_count)
+        self.assertEqual(1, len(items))
+
+        # Build feed XML.
+        xml_doc = feed.build_feed_xml(feed.FEEDS[0], "Cerim", items)
+
+        # Step 2: Next run loads existing XML document.
+        existing_parsed = feed.parse_existing_items(xml_doc)
+        self.assertIn("https://www.patreon.com/posts/938", existing_parsed)
+
+        # Step 3: Pawchive later releases Chapter 938 with identical post ID.
+        pawchive_post = {
+            "id": "938",
+            "title": "Chapter 938 - The Wraith",
+            "published": "2026-09-29T08:36:48",
+            "content": "<p>Content from Pawchive</p>",
+            "user": "31891971",
+            "service": "patreon",
+            "url": "https://pawchive.pw/patreon/user/31891971/post/938",
+        }
+
+        # Merge new Pawchive post against existing feed items.
+        merged_items, new_renders, _ = feed.merge_new_posts(existing_parsed, [pawchive_post])
+        self.assertEqual(0, new_renders)
+        self.assertEqual(1, len(merged_items))
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

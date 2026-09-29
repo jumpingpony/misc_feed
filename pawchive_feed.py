@@ -29,7 +29,10 @@ import requests
 
 BASE = "https://pawchive.pw"
 API_BASE = BASE + "/api/v1"
-PATREON_API_BASE = "https://www.patreon.com/api"
+PATREON_BASE = "https://www.patreon.com"
+PATREON_API_BASE = PATREON_BASE + "/api"
+CUMST_BASE = "https://cum.st"
+CUMST_API_BASE = CUMST_BASE + "/api/v1"
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/151.0.7922.76 Safari/537.36"
@@ -305,15 +308,19 @@ def build_chapter(post: dict) -> str:
 
 
 def parse_date(value: object) -> dt.datetime:
-    """Parse an ISO-8601 formatted timestamp string into a timezone-aware UTC datetime.
+    """Parse ISO 8601 string or numeric unix timestamp into UTC datetime.
 
     Args:
-        value: Timestamp string (e.g., '2026-08-20T10:00:00Z' or '2026-08-20T10:00:00+00:00').
+        value: Date representation (ISO string, unix epoch number, or None).
 
     Returns:
-        Datetime instance normalized to UTC. Defaults to dt.datetime.now(UTC) if parsing fails.
+        Timezone-aware datetime in UTC. Defaults to current time if parsing fails.
     """
-    # Attempt ISO-8601 string parsing when valid input is provided.
+    # Convert numeric unix timestamp (from platforms like cum.st) to datetime.
+    if isinstance(value, (int, float)):
+        return dt.datetime.fromtimestamp(value, UTC)
+
+    # Attempt ISO-8601 string parsing when valid string input is provided.
     if isinstance(value, str) and value:
         try:
             parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -326,23 +333,25 @@ def parse_date(value: object) -> dt.datetime:
 
 
 def post_permalink(post: dict) -> str:
-    """Build the canonical Pawchive web URL for a given post.
+    """Build the canonical Patreon chapter link for a given post.
 
     Example:
-        >>> post = {"service": "patreon", "user": "31891971", "id": "167183185"}
+        >>> post = {"id": "167183185"}
         >>> post_permalink(post)
-        'https://pawchive.pw/patreon/user/31891971/post/167183185'
+        'https://www.patreon.com/posts/167183185'
 
     Args:
-        post: Post dictionary containing 'service', 'user', and 'id'.
+        post: Post dictionary containing 'id' and optional 'url'.
 
     Returns:
-        Canonical permalink URL string.
+        Canonical Patreon chapter URL string.
     """
-    service = post.get("service", "patreon")
-    user = post.get("user", "")
+    url = post.get("url")
+    if isinstance(url, str) and url.startswith(PATREON_BASE):
+        return url
+
     post_id = post.get("id", "")
-    return f"{BASE}/{service}/user/{user}/post/{post_id}"
+    return f"{PATREON_BASE}/posts/{post_id}"
 
 
 def plain_summary(body: str, limit: int = 500) -> str:
@@ -417,6 +426,26 @@ def parse_rss_date(value: str) -> dt.datetime | None:
         return None
 
 
+def extract_post_id(value: str) -> str | None:
+    """Extract numeric post ID from a Patreon or Pawchive URL or ID string.
+
+    Args:
+        value: URL or identifier string.
+
+    Returns:
+        Extracted numeric post ID string or None.
+    """
+    m = re.search(r"/posts?/(\d+)", value)
+    if m:
+        return m.group(1)
+
+    digits = re.search(r"\b\d+\b", value)
+    if digits:
+        return digits.group(0)
+
+    return None
+
+
 def parse_existing_items(document: str) -> dict[str, tuple[dt.datetime, str]]:
     """Extract existing rendered <item> XML blocks from an RSS document without re-parsing HTML.
 
@@ -424,7 +453,7 @@ def parse_existing_items(document: str) -> dict[str, tuple[dt.datetime, str]]:
         document: Full XML document string of a previously generated feed.
 
     Returns:
-        Dictionary mapping item identity (guid or link URL) to a tuple of
+        Dictionary mapping item identity (canonical Patreon URL) to a tuple of
         (published_datetime, raw_item_xml_string).
     """
     items: dict[str, tuple[dt.datetime, str]] = {}
@@ -445,9 +474,14 @@ def parse_existing_items(document: str) -> dict[str, tuple[dt.datetime, str]]:
         if published is None:
             continue
 
-        identity = html.unescape(identity_match.group(1)).strip()
-        if identity:
-            items[identity] = (published, block)
+        raw_identity = html.unescape(identity_match.group(1)).strip()
+        if not raw_identity:
+            continue
+
+        # Canonicalize to Patreon post permalink for uniform de-duplication across platforms.
+        post_id = extract_post_id(raw_identity)
+        identity = f"{PATREON_BASE}/posts/{post_id}" if post_id else raw_identity
+        items[identity] = (published, block)
 
     return items
 
@@ -483,34 +517,80 @@ def load_existing(session: requests.Session, feed: dict) -> dict[str, tuple[dt.d
     return items
 
 
-def collect_posts(session: requests.Session, creator_id: str) -> list[dict]:
-    """Fetch the latest posts for a creator from the Pawchive API.
+def collect_posts(
+    session: requests.Session,
+    creator_id: str,
+    campaign_id: str | None = None,
+) -> list[dict]:
+    """Fetch and merge latest posts from Pawchive and cum.st.
 
-    Pawchive enforces fixed 50-result API pages. We query page 0 (newest posts)
-    and retain up to ITEM_LIMIT sorted entries.
+    Pawchive provides primary post archives. If a chapter appears on cum.st first,
+    it is extracted and unified into the feed candidates without duplication.
 
     Args:
         session: Active requests HTTP session.
         creator_id: Pawchive creator user ID.
+        campaign_id: Optional Patreon/cum.st campaign ID.
 
     Returns:
         List of post dictionaries sorted newest first up to ITEM_LIMIT.
     """
-    # Fetch first page of 50 posts from Pawchive API.
-    url = f"{API_BASE}/patreon/user/{creator_id}?o=0"
-    payload = fetch_json(session, url)
-    if not isinstance(payload, list):
-        raise RuntimeError(f"unexpected creator-post response from {url}")
+    posts_by_id: dict[str, dict] = {}
 
-    # Deduplicate posts by permalink to guard against duplicate entries in API payload.
-    posts_by_link = {
-        post_permalink(post): post
-        for post in payload
-        if isinstance(post, dict) and post.get("id")
-    }
-    posts = list(posts_by_link.values())
+    # Query cum.st first if campaign ID is configured.
+    if campaign_id:
+        cumst_url = f"{CUMST_API_BASE}/patreon/user/{campaign_id}/posts?limit={ITEM_LIMIT}"
+        try:
+            cumst_data = fetch_json(session, cumst_url)
+            cumst_items = cumst_data.get("posts", []) if isinstance(cumst_data, dict) else []
+            for item in cumst_items:
+                pid = str(item.get("id") or "")
+                body = item.get("captionHtml") or item.get("caption") or ""
+                if not pid or not body:
+                    continue
+
+                posts_by_id[pid] = {
+                    "id": pid,
+                    "title": str(item.get("title") or "Untitled"),
+                    "published": parse_date(item.get("published")),
+                    "content": body,
+                    "user": creator_id,
+                    "service": "patreon",
+                    "url": f"{PATREON_BASE}/posts/{pid}",
+                }
+        except (RuntimeError, requests.RequestException):
+            pass
+
+    # Query Pawchive API.
+    url = f"{API_BASE}/patreon/user/{creator_id}?o=0"
+    try:
+        payload = fetch_json(session, url)
+        if isinstance(payload, list):
+            for post in payload:
+                if not isinstance(post, dict) or not post.get("id"):
+                    continue
+
+                pid = str(post["id"])
+                existing_entry = posts_by_id.get(pid, {})
+                post_content = post.get("content") or existing_entry.get("content") or ""
+
+                posts_by_id[pid] = {
+                    "id": pid,
+                    "title": str(post.get("title") or existing_entry.get("title") or "Untitled"),
+                    "published": parse_date(post.get("published") or post.get("added")),
+                    "content": post_content,
+                    "user": creator_id,
+                    "service": "patreon",
+                    "url": post.get("url") or f"{PATREON_BASE}/posts/{pid}",
+                }
+        elif not posts_by_id:
+            raise RuntimeError(f"unexpected creator-post response from {url}")
+    except (RuntimeError, requests.RequestException):
+        if not posts_by_id:
+            raise
 
     # Sort posts descending by publication date and retain top slice.
+    posts = list(posts_by_id.values())
     posts.sort(
         key=lambda post: parse_date(post.get("published") or post.get("added")),
         reverse=True,
@@ -527,9 +607,10 @@ def merge_new_posts(
 
     Flow:
         1. Identify newest publication timestamp in existing items.
-        2. Filter incoming posts: only render items newer than newest existing date.
-        3. Sort merged items descending by publication date.
-        4. Evict oldest items that exceed ITEM_LIMIT.
+        2. Build post ID lookup to prevent duplicates across multiple archive sources.
+        3. Filter incoming posts: only render items newer than newest existing date.
+        4. Sort merged items descending by publication date.
+        5. Evict oldest items that exceed ITEM_LIMIT.
 
     Args:
         existing: Mapping of identity -> (published_date, item_xml).
@@ -543,19 +624,29 @@ def merge_new_posts(
     newest_existing = max((value[0] for value in existing.values()), default=None)
     rendered = 0
 
+    # Build lookup of existing post IDs for robust per-chapter de-duplication.
+    existing_ids = {
+        extract_post_id(k)
+        for k in merged
+        if extract_post_id(k) is not None
+    }
+
     # Add only unseen posts that are newer than latest retained entry.
     for post in posts:
         identity = post_permalink(post)
+        post_id = str(post.get("id", ""))
         published = parse_date(post.get("published") or post.get("added"))
 
         # Skip already retained posts or posts older than our newest retained item.
-        if identity in merged:
+        if identity in merged or (post_id and post_id in existing_ids):
             continue
         if newest_existing is not None and published <= newest_existing:
             continue
 
         # Render HTML body and XML block for new post.
         merged[identity] = (published, renderer(post).strip())
+        if post_id:
+            existing_ids.add(post_id)
         rendered += 1
 
     # Sort merged collection by date descending and evict excess oldest items.
@@ -929,6 +1020,130 @@ def sync_and_flag_patreon_posts(
     return newer_posts
 
 
+def get_latest_cumst_posts(
+    session: requests.Session,
+    campaign_id: str,
+    count: int = 20,
+) -> list[dict]:
+    """Fetch recent post metadata from cum.st creator feed API.
+
+    Args:
+        session: Active requests HTTP session.
+        campaign_id: Creator campaign ID on cum.st.
+        count: Maximum number of posts to retrieve.
+
+    Returns:
+        List of dicts containing 'id', 'title', 'published', and 'url'.
+    """
+    url = f"{CUMST_API_BASE}/patreon/user/{campaign_id}/posts?limit={count}"
+
+    # Query cum.st posts endpoint.
+    for _ in range(RETRIES + 1):
+        try:
+            response = session.get(url, timeout=TIMEOUT)
+            response.raise_for_status()
+            items = response.json().get("posts", [])
+            results = []
+
+            for item in items:
+                pub_val = item.get("published")
+                if pub_val is None:
+                    continue
+
+                pub_dt = parse_date(pub_val)
+                post_id = str(item.get("id"))
+                post_url = f"{CUMST_BASE}/patreon/user/{campaign_id}/post/{post_id}"
+
+                results.append({
+                    "id": post_id,
+                    "title": str(item.get("title") or "Untitled"),
+                    "published": pub_dt,
+                    "url": post_url,
+                })
+
+            return results
+        except (requests.RequestException, json.JSONDecodeError):
+            pass
+
+    return []
+
+
+def check_cumst_posts(
+    session: requests.Session,
+    feed: dict,
+    newest_retained_date: dt.datetime | None,
+    known_imported_ids: set[str] | None = None,
+) -> list[dict]:
+    """Check cum.st for posts missing from the local Pawchive feed.
+
+    Args:
+        session: Active HTTP session.
+        feed: Feed configuration dictionary.
+        newest_retained_date: Timestamp of newest existing post in feed.
+        known_imported_ids: Set of post IDs already known to Pawchive.
+
+    Returns:
+        List of newer post dictionaries found on cum.st.
+    """
+    campaign_id = feed.get("campaign_id")
+    if not campaign_id:
+        return []
+
+    # Fetch recent posts from cum.st API.
+    cumst_posts = get_latest_cumst_posts(session, campaign_id)
+    if not cumst_posts:
+        return []
+
+    # Filter for posts not yet imported and newer than retained items.
+    known_ids = known_imported_ids or set()
+    newer_posts = [
+        p
+        for p in cumst_posts
+        if p["id"] not in known_ids
+        and (newest_retained_date is None or p["published"] > newest_retained_date)
+    ]
+
+    # Report cum.st availability.
+    for post in sorted(newer_posts, key=lambda x: x["published"]):
+        print(f"  [cum.st check] Post {post['id']} ({post['title']}): available on cum.st")
+
+    return newer_posts
+
+
+def get_feed_sync_baseline(
+    session: requests.Session,
+    feed: dict,
+) -> tuple[dt.datetime | None, set[str]]:
+    """Determine latest publication date and known post IDs from disk and Pawchive.
+
+    Args:
+        session: Active HTTP session.
+        feed: Feed configuration dictionary.
+
+    Returns:
+        Tuple of (newest_retained_date, known_imported_ids).
+    """
+    existing = load_existing(session, feed)
+    posts = collect_posts(session, feed["creator_id"], feed.get("campaign_id"))
+
+    # Extract all known post IDs from Pawchive listing.
+    known_ids = {
+        str(p.get("id"))
+        for p in posts
+        if isinstance(p, dict) and p.get("id")
+    }
+
+    # Identify most recent timestamp between disk cache and Pawchive listing.
+    all_dates = [val[0] for val in existing.values()] + [
+        parse_date(p.get("published") or p.get("added"))
+        for p in posts
+        if isinstance(p, dict)
+    ]
+    newest_date = max(all_dates, default=None)
+
+    return newest_date, known_ids
+
+
 def run_feed(
     session: requests.Session,
     feed: dict,
@@ -949,7 +1164,7 @@ def run_feed(
 
     # Load existing historical items and fetch latest creator posts from Pawchive.
     existing = load_existing(session, feed)
-    posts = collect_posts(session, feed["creator_id"])
+    posts = collect_posts(session, feed["creator_id"], feed.get("campaign_id"))
 
     # Merge new posts into historical collection and write feed artifacts.
     items, rendered, evicted = merge_new_posts(existing, posts)
@@ -961,7 +1176,7 @@ def run_feed(
         f"newly rendered: {rendered}; evicted oldest: {evicted}; feed items: {count}"
     )
 
-    # If enabled, check Patreon for newer posts not yet archived on Pawchive.
+    # If enabled, check Patreon and cum.st for newer posts not yet archived on Pawchive.
     if sync_mode == SyncMode.SYNC_PATREON:
         newest_date = max((val[0] for val in items.values()), default=None)
         known_imported_ids = {
@@ -970,6 +1185,7 @@ def run_feed(
             if isinstance(p, dict) and p.get("id")
         }
         sync_and_flag_patreon_posts(session, feed, newest_date, known_imported_ids)
+        check_cumst_posts(session, feed, newest_date, known_imported_ids)
 
     return count
 
@@ -1003,6 +1219,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Check Patreon for newer posts without building feeds",
     )
     parser.add_argument(
+        "--check-cumst",
+        action="store_true",
+        help="Check cum.st for newer posts without building feeds",
+    )
+    parser.add_argument(
         "--skip-patreon-sync",
         action="store_true",
         help="Skip checking Patreon during feed build",
@@ -1033,16 +1254,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Post {post_id} on {service}/{creator_id}: {reason}")
         return 0 if ok else 1
 
+    # Handle cum.st check dry-run action (--check-cumst).
+    if opts.check_cumst:
+        for feed in FEEDS:
+            campaign_id = feed.get("campaign_id")
+            if not campaign_id:
+                continue
+            newest_date, known_ids = get_feed_sync_baseline(session, feed)
+            newer = check_cumst_posts(session, feed, newest_date, known_ids)
+            print(f"[{feed['key']}] Found {len(newer)} newer post(s) on cum.st.")
+        return 0
+
     # Handle Patreon check dry-run action (--check-patreon).
     if opts.check_patreon:
         for feed in FEEDS:
             campaign_id = feed.get("campaign_id")
             if not campaign_id:
                 continue
-            existing = load_existing(session, feed)
-            newest_date = max((val[0] for val in existing.values()), default=None)
-            newer = sync_and_flag_patreon_posts(session, feed, newest_date)
+            newest_date, known_ids = get_feed_sync_baseline(session, feed)
+            newer = sync_and_flag_patreon_posts(session, feed, newest_date, known_ids)
             print(f"[{feed['key']}] Found {len(newer)} newer post(s) on Patreon.")
+            newer_cumst = check_cumst_posts(session, feed, newest_date, known_ids)
+            print(f"[{feed['key']}] Found {len(newer_cumst)} newer post(s) on cum.st.")
         return 0
 
     # Ensure output directory exists and prune obsolete feed subdirectories.
