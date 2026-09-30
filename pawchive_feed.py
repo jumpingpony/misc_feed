@@ -107,7 +107,7 @@ def make_session(cookie: str | None = None) -> requests.Session:
     return rss.make_session(
         cookie=active_cookie,
         cookie_domain="pawchive.pw",
-        accept_json=True,
+        accept=rss.AcceptFormat.JSON,
     )
 
 
@@ -305,7 +305,7 @@ def render_item(post: dict) -> str:
         guid=link,
         published=published,
         body=build_chapter(post),
-        guid_is_permalink=True,
+        guid_kind=rss.GuidKind.PERMALINK,
     )
 
 
@@ -666,7 +666,13 @@ def check_post_flag(
 
     # A 404 means "not flagged"; other persistent failures are treated as unset.
     try:
-        response = rss.fetch(session, url, timeout=TIMEOUT, retries=RETRIES, optional=True)
+        response = rss.fetch(
+            session,
+            url,
+            timeout=TIMEOUT,
+            retries=RETRIES,
+            on_not_found=rss.OnNotFound.RETURN_NONE,
+        )
     except RuntimeError:
         return False
 

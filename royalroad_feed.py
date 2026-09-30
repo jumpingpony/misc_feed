@@ -251,7 +251,7 @@ def render_item(chapter: dict) -> str:
         guid=chapter["guid"],
         published=chapter["date"],
         body=chapter["body_html"],
-        guid_is_permalink=False,
+        guid_kind=rss.GuidKind.IDENTIFIER,
     )
 
 
