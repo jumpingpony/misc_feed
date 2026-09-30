@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from email.utils import format_datetime
 from http import HTTPStatus
 from pathlib import Path
 import tempfile
@@ -390,6 +391,25 @@ class PawchiveFeedTests(unittest.TestCase):
         ts = 1790585982
         parsed = feed.parse_date(ts)
         self.assertEqual(dt.datetime(2026, 9, 28, 8, 59, 42, tzinfo=dt.timezone.utc), parsed)
+
+    def test_parse_date_passthrough(self):
+        # Verify already-parsed datetimes are returned unchanged, not replaced with now.
+        value = dt.datetime(2026, 8, 20, 8, 44, 47, tzinfo=dt.timezone.utc)
+        self.assertIs(value, feed.parse_date(value))
+
+    def test_merge_preserves_publication_dates(self):
+        # Verify collect_posts-style datetime values survive merge and rendering.
+        post = self.make_post(5, 5)
+        post["published"] = feed.parse_date(post["published"])
+
+        merged, rendered, _ = feed.merge_new_posts({}, [post])
+
+        self.assertEqual(1, rendered)
+        self.assertEqual(post["published"], merged[feed.post_permalink(post)][0])
+        self.assertIn(
+            f"<pubDate>{format_datetime(post['published'])}</pubDate>",
+            merged[feed.post_permalink(post)][1],
+        )
 
     def test_get_latest_cumst_posts(self):
         # Verify fetching and parsing posts from cum.st API.

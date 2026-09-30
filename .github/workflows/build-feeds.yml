@@ -10,6 +10,7 @@ on:
     paths:
       - pawchive_feed.py
       - royalroad_feed.py
+      - rss_common.py
       - requirements.txt
       - .github/workflows/build-feeds.yml
 

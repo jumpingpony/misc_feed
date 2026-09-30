@@ -5,26 +5,24 @@ Post discovery and post bodies come from Pawchive's documented v1 API.  Chapter
 HTML is read from the same API field used by WebToEpub's PawchiveParser. Explicit
 previous/next navigation and attachments are omitted; author notes remain.
 
-Output: public/<feed-key>/feed.xml and public/<feed-key>/index.html.
+Output: public/<feed-key>/feed.xml and public/<feed-key>/index.html.  Shared
+plumbing lives in rss_common.py; this builder keeps source-specific logic.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
-from email.utils import format_datetime, parsedate_to_datetime
 from enum import Enum, auto
 import html
 from html.parser import HTMLParser
 from http import HTTPStatus
-import json
 import os
 from pathlib import Path
 import re
-import shutil
-from urllib.parse import urljoin, urlparse
-from xml.sax.saxutils import escape
 
 import requests
+
+import rss_common as rss
 
 
 BASE = "https://pawchive.pw"
@@ -33,11 +31,6 @@ PATREON_BASE = "https://www.patreon.com"
 PATREON_API_BASE = PATREON_BASE + "/api"
 CUMST_BASE = "https://cum.st"
 CUMST_API_BASE = CUMST_BASE + "/api/v1"
-UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/151.0.7922.76 Safari/537.36"
-)
-UTC = dt.timezone.utc
 
 DEFAULT_SESSION_COOKIE = (
     "eyJfcGVybWFuZW50Ijp0cnVlLCJhY2NvdW50X2lkIjozNDU4MjJ9."
@@ -88,7 +81,6 @@ ALLOWED_ATTRS = {
     "alt", "class", "colspan", "datetime", "height", "href", "lang", "loading", "rel",
     "rowspan", "src", "srcset", "title", "width",
 }
-URL_ATTRS = {"href", "src"}
 
 NAVIGATION_BLOCK_RE = re.compile(
     r"(?:"
@@ -109,62 +101,14 @@ class SyncMode(Enum):
 
 # Create HTTP session configured with headers and Pawchive auth cookie.
 def make_session(cookie: str | None = None) -> requests.Session:
-    session = requests.Session()
-
-    # Set default browser headers for API requests.
-    session.headers.update({"User-Agent": UA, "Accept-Language": "en", "Accept": "application/json"})
-
-    # Attach session cookie when available for authenticated endpoints.
     active_cookie = cookie if cookie is not None else SESSION_COOKIE
-    if active_cookie:
-        session.cookies.set("session", active_cookie, domain="pawchive.pw")
 
-    return session
-
-
-# Fetch and decode JSON from URL with retry handling.
-def fetch_json(session: requests.Session, url: str) -> object:
-    last_error = "unknown error"
-
-    # Retry transient network and JSON decode failures.
-    for _ in range(RETRIES + 1):
-        try:
-            response = session.get(url, timeout=TIMEOUT)
-            response.raise_for_status()
-            return response.json()
-        except (requests.RequestException, json.JSONDecodeError) as exc:
-            last_error = str(exc)
-
-    raise RuntimeError(f"failed to fetch {url}: {last_error}")
-
-
-# Fetch published feed XML; return None on 404 for initial deployment.
-def fetch_existing(session: requests.Session, url: str) -> bytes | None:
-    last_error = "unknown error"
-
-    # Retry remote request to tolerate transient outages.
-    for _ in range(RETRIES + 1):
-        try:
-            response = session.get(url, timeout=TIMEOUT)
-            if response.status_code == HTTPStatus.NOT_FOUND:
-                return None
-            response.raise_for_status()
-            return response.content
-        except requests.RequestException as exc:
-            last_error = str(exc)
-
-    raise RuntimeError(f"failed to load published feed {url}: {last_error}")
-
-
-# Resolve relative URL and enforce allowed URI schemes.
-def safe_url(value: str, base_url: str) -> str | None:
-    absolute = urljoin(base_url, value.strip())
-
-    # Allow only web and mail protocols; block script execution vectors.
-    if urlparse(absolute).scheme.lower() in {"http", "https", "mailto"}:
-        return absolute
-
-    return None
+    # Attach the session cookie for authenticated endpoints when available.
+    return rss.make_session(
+        cookie=active_cookie,
+        cookie_domain="pawchive.pw",
+        accept_json=True,
+    )
 
 
 class ChapterSanitizer(HTMLParser):
@@ -217,8 +161,8 @@ class ChapterSanitizer(HTMLParser):
             name = name.lower()
             if name not in ALLOWED_ATTRS or value is None:
                 continue
-            if name in URL_ATTRS:
-                value = safe_url(value, self.base_url)
+            if name in rss.URL_ATTRS:
+                value = rss.safe_url(value, self.base_url)
                 if value is None:
                     continue
             clean_attrs.append(f' {name}="{html.escape(value, quote=True)}"')
@@ -286,13 +230,13 @@ def remove_chapter_fluff(source_html: str) -> str:
 
 
 def build_chapter(post: dict) -> str:
-    """Extract, sanitize, and prepare the complete chapter HTML body for RSS embedding.
+    """Extract and sanitize the complete chapter HTML body for RSS embedding.
 
     Args:
         post: Post dictionary retrieved from Pawchive API.
 
     Returns:
-        Sanitized HTML string safe for inclusion within an XML CDATA block.
+        Sanitized HTML string; CDATA escaping happens at render time.
     """
     post_url = post_permalink(post)
 
@@ -301,35 +245,21 @@ def build_chapter(post: dict) -> str:
     sanitizer.feed(remove_chapter_fluff(str(post.get("content") or "")))
     sanitizer.close()
 
-    # XML CDATA blocks cannot contain the sequence ']]>'.
-    # Splitting into ']]]]><![CDATA[>' preserves the literal character sequence in XML parsers.
-    body = sanitizer.get_html()
-    return body.replace("]]>", "]]]]><![CDATA[>")
+    return sanitizer.get_html()
 
 
 def parse_date(value: object) -> dt.datetime:
     """Parse ISO 8601 string or numeric unix timestamp into UTC datetime.
 
     Args:
-        value: Date representation (ISO string, unix epoch number, or None).
+        value: Date representation (ISO string, unix epoch number, datetime,
+            or None).
 
     Returns:
-        Timezone-aware datetime in UTC. Defaults to current time if parsing fails.
+        Timezone-aware datetime in UTC.  Already-parsed datetimes pass through;
+        missing or invalid values default to the current time.
     """
-    # Convert numeric unix timestamp (from platforms like cum.st) to datetime.
-    if isinstance(value, (int, float)):
-        return dt.datetime.fromtimestamp(value, UTC)
-
-    # Attempt ISO-8601 string parsing when valid string input is provided.
-    if isinstance(value, str) and value:
-        try:
-            parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
-        except ValueError:
-            pass
-
-    # Fallback to current time if the date field was missing or invalid.
-    return dt.datetime.now(UTC)
+    return rss.parse_iso_datetime(value)
 
 
 def post_permalink(post: dict) -> str:
@@ -354,27 +284,6 @@ def post_permalink(post: dict) -> str:
     return f"{PATREON_BASE}/posts/{post_id}"
 
 
-def plain_summary(body: str, limit: int = 500) -> str:
-    """Create a plain-text excerpt from chapter HTML for the RSS <description> tag.
-
-    Args:
-        body: Chapter HTML content string.
-        limit: Maximum character length of the summary before truncation.
-
-    Returns:
-        Plain-text summary truncated cleanly at the last space boundary with an ellipsis.
-    """
-    # Strip HTML tags and collapse whitespace runs into single spaces.
-    text = html.unescape(re.sub(r"<[^>]+>", " ", body))
-    text = re.sub(r"\s+", " ", text).strip()
-
-    # Truncate text at word boundary if it exceeds the length limit.
-    if len(text) > limit:
-        text = text[:limit].rsplit(" ", 1)[0] + "…"
-
-    return text
-
-
 def render_item(post: dict) -> str:
     """Render a Pawchive post dictionary into an RSS 2.0 <item> XML string.
 
@@ -389,18 +298,14 @@ def render_item(post: dict) -> str:
     title = str(post.get("title") or "Untitled").strip()
     link = post_permalink(post)
     published = parse_date(post.get("published") or post.get("added"))
-    body = build_chapter(post)
 
-    # Format into standard RSS 2.0 item XML structure.
-    return (
-        "    <item>\n"
-        f"      <title>{escape(title)}</title>\n"
-        f"      <link>{escape(link)}</link>\n"
-        f"      <guid isPermaLink=\"true\">{escape(link)}</guid>\n"
-        f"      <pubDate>{format_datetime(published)}</pubDate>\n"
-        f"      <description>{escape(plain_summary(body))}</description>\n"
-        f"      <content:encoded><![CDATA[{body}]]></content:encoded>\n"
-        "    </item>"
+    return rss.render_rss_item(
+        title=title,
+        link=link,
+        guid=link,
+        published=published,
+        body=build_chapter(post),
+        guid_is_permalink=True,
     )
 
 
@@ -408,22 +313,6 @@ ITEM_RE = re.compile(r"<item>.*?</item>", re.S)
 GUID_RE = re.compile(r"<guid[^>]*>(.*?)</guid>", re.S)
 LINK_RE = re.compile(r"<link>(.*?)</link>", re.S)
 PUBDATE_RE = re.compile(r"<pubDate>(.*?)</pubDate>", re.S)
-
-
-def parse_rss_date(value: str) -> dt.datetime | None:
-    """Parse an RFC-822 / RFC-2822 date string from an existing RSS feed document.
-
-    Args:
-        value: Date string (e.g., 'Tue, 04 Aug 2026 21:00:16 +0000').
-
-    Returns:
-        Timezone-aware UTC datetime, or None if parsing fails.
-    """
-    try:
-        parsed = parsedate_to_datetime(html.unescape(value).strip())
-        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
-    except (TypeError, ValueError):
-        return None
 
 
 def extract_post_id(value: str) -> str | None:
@@ -470,7 +359,7 @@ def parse_existing_items(document: str) -> dict[str, tuple[dt.datetime, str]]:
         if identity_match is None or date_match is None:
             continue
 
-        published = parse_rss_date(date_match.group(1))
+        published = rss.parse_rfc822_datetime(date_match.group(1))
         if published is None:
             continue
 
@@ -496,23 +385,19 @@ def load_existing(session: requests.Session, feed: dict) -> dict[str, tuple[dt.d
     Returns:
         Dictionary mapping item identity to (published_datetime, raw_item_xml).
     """
-    documents: list[str] = []
+    documents = rss.load_feed_documents(
+        session,
+        out_dir=OUT_DIR,
+        key=feed["key"],
+        site_base_url=SITE_BASE_URL,
+        timeout=TIMEOUT,
+        retries=RETRIES,
+    )
 
-    # Read locally cached feed XML file if it exists on disk.
-    local_path = OUT_DIR / feed["key"] / "feed.xml"
-    if local_path.is_file():
-        documents.append(local_path.read_text(encoding="utf-8"))
-
-    # Fetch live feed XML from site base URL to retain historical items on fresh CI checkouts.
-    if SITE_BASE_URL:
-        remote = fetch_existing(session, f"{SITE_BASE_URL}/{feed['key']}/feed.xml")
-        if remote is not None:
-            documents.append(remote.decode("utf-8-sig"))
-
-    # Merge items across all loaded documents (local and remote).
+    # Merge items across all loaded documents (local and remote), tolerating BOMs.
     items: dict[str, tuple[dt.datetime, str]] = {}
     for document in documents:
-        items.update(parse_existing_items(document))
+        items.update(parse_existing_items(document.decode("utf-8-sig")))
 
     return items
 
@@ -541,7 +426,7 @@ def collect_posts(
     if campaign_id:
         cumst_url = f"{CUMST_API_BASE}/patreon/user/{campaign_id}/posts?limit={ITEM_LIMIT}"
         try:
-            cumst_data = fetch_json(session, cumst_url)
+            cumst_data = rss.fetch_json(session, cumst_url, timeout=TIMEOUT, retries=RETRIES)
             cumst_items = cumst_data.get("posts", []) if isinstance(cumst_data, dict) else []
             for item in cumst_items:
                 pid = str(item.get("id") or "")
@@ -564,7 +449,7 @@ def collect_posts(
     # Query Pawchive API.
     url = f"{API_BASE}/patreon/user/{creator_id}?o=0"
     try:
-        payload = fetch_json(session, url)
+        payload = rss.fetch_json(session, url, timeout=TIMEOUT, retries=RETRIES)
         if isinstance(payload, list):
             for post in payload:
                 if not isinstance(post, dict) or not post.get("id"):
@@ -605,13 +490,6 @@ def merge_new_posts(
 ) -> tuple[dict[str, tuple[dt.datetime, str]], int, int]:
     """Merge newly discovered posts into existing feed items with deduplication and eviction.
 
-    Flow:
-        1. Identify newest publication timestamp in existing items.
-        2. Build post ID lookup to prevent duplicates across multiple archive sources.
-        3. Filter incoming posts: only render items newer than newest existing date.
-        4. Sort merged items descending by publication date.
-        5. Evict oldest items that exceed ITEM_LIMIT.
-
     Args:
         existing: Mapping of identity -> (published_date, item_xml).
         posts: List of freshly fetched post dictionaries.
@@ -620,50 +498,28 @@ def merge_new_posts(
     Returns:
         Tuple of (merged_items_dict, newly_rendered_count, evicted_count).
     """
-    merged = dict(existing)
-    newest_existing = max((value[0] for value in existing.values()), default=None)
-    rendered = 0
-
-    # Build lookup of existing post IDs for robust per-chapter de-duplication.
-    existing_ids = {
-        extract_post_id(k)
-        for k in merged
-        if extract_post_id(k) is not None
+    # Canonicalize retained identities to post IDs for robust de-duplication.
+    existing_guids = {
+        post_id
+        for key in existing
+        if (post_id := extract_post_id(key)) is not None
     }
 
-    # Add only unseen posts that are newer than latest retained entry.
-    for post in posts:
-        identity = post_permalink(post)
-        post_id = str(post.get("id", ""))
-        published = parse_date(post.get("published") or post.get("added"))
-
-        # Skip already retained posts or posts older than our newest retained item.
-        if identity in merged or (post_id and post_id in existing_ids):
-            continue
-        if newest_existing is not None and published <= newest_existing:
-            continue
-
-        # Render HTML body and XML block for new post.
-        merged[identity] = (published, renderer(post).strip())
-        if post_id:
-            existing_ids.add(post_id)
-        rendered += 1
-
-    # Sort merged collection by date descending and evict excess oldest items.
-    ordered = sorted(merged.items(), key=lambda value: (value[1][0], value[0]), reverse=True)
-    evicted = max(0, len(ordered) - ITEM_LIMIT)
-
-    return dict(ordered[:ITEM_LIMIT]), rendered, evicted
+    return rss.merge_new_items(
+        existing,
+        posts,
+        identity=post_permalink,
+        published=lambda post: parse_date(post.get("published") or post.get("added")),
+        load=lambda post: renderer(post).strip(),
+        limit=ITEM_LIMIT,
+        guid=lambda post: str(post.get("id") or "") or None,
+        existing_guids=existing_guids,
+    )
 
 
 # Format feed title as 'novel title - Author'.
 def feed_title(feed: dict) -> str:
-    title = feed.get("title")
-    author = feed.get("author") or feed.get("fallback_name")
-    if title and author:
-        return f"{title} - {author}"
-
-    return title or author or ""
+    return rss.feed_title(feed)
 
 
 def build_feed_xml(feed: dict, name: str, items: dict[str, tuple[dt.datetime, str]]) -> str:
@@ -684,27 +540,14 @@ def build_feed_xml(feed: dict, name: str, items: dict[str, tuple[dt.datetime, st
     creator_url = f"{BASE}/patreon/user/{feed['creator_id']}"
     title = feed_title(feed) or f"{name} — Pawchive"
     description = f"Unofficial full-text feed for {title} archived by Pawchive."
-    self_link = (
-        f'    <atom:link href="{escape(SITE_BASE_URL + "/" + feed["key"] + "/feed.xml")}" '
-        'rel="self" type="application/rss+xml" />\n'
-        if SITE_BASE_URL
-        else ""
-    )
+    self_url = f"{SITE_BASE_URL}/{feed['key']}/feed.xml" if SITE_BASE_URL else None
 
-    # Assemble complete RSS XML document.
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" '
-        'xmlns:atom="http://www.w3.org/2005/Atom">\n'
-        "  <channel>\n"
-        f"    <title>{escape(title)}</title>\n"
-        f"    <link>{escape(creator_url)}</link>\n"
-        f"    <description>{escape(description)}</description>\n"
-        "    <language>en</language>\n"
-        f"    <lastBuildDate>{format_datetime(dt.datetime.now(UTC))}</lastBuildDate>\n"
-        f"{self_link}"
-        + "\n".join(item for _, item in ordered)
-        + "\n  </channel>\n</rss>\n"
+    return rss.build_feed_document(
+        title=title,
+        link=creator_url,
+        description=description,
+        item_xml=(item for _, item in ordered),
+        self_url=self_url,
     )
 
 
@@ -717,24 +560,17 @@ def write_feed(feed: dict, name: str, xml: str, count: int) -> None:
         xml: Generated RSS XML document string.
         count: Number of items contained in the feed.
     """
-    # Create target feed output directory.
-    directory = OUT_DIR / feed["key"]
-    directory.mkdir(parents=True, exist_ok=True)
-
-    # Write feed.xml file.
-    (directory / "feed.xml").write_text(xml, encoding="utf-8")
-
-    # Generate and write companion index.html landing page.
+    # Write feed.xml and the companion index.html landing page.
     title = feed_title(feed) or f"{name} — Pawchive"
-    page = (
-        "<!doctype html><meta charset='utf-8'>"
-        f"<title>{html.escape(title)} — Pawchive RSS</title>"
-        f"<h1>{html.escape(title)} — Pawchive RSS</h1>"
-        "<p>Unofficial full-text feed generated from the Pawchive API.</p>"
-        "<p><a href='feed.xml'>Subscribe to feed.xml</a></p>"
-        f"<p>{count} items.</p>"
+    rss.write_feed_files(
+        OUT_DIR,
+        feed["key"],
+        xml,
+        title=title,
+        page_suffix="Pawchive RSS",
+        description="Unofficial full-text feed generated from the Pawchive API.",
+        count=count,
     )
-    (directory / "index.html").write_text(page, encoding="utf-8")
 
 
 def is_pawchive_feed_dir(path: Path) -> bool:
@@ -746,30 +582,11 @@ def is_pawchive_feed_dir(path: Path) -> bool:
     Returns:
         True if the directory contains a feed.xml or index.html mentioning Pawchive signatures.
     """
-    if not path.is_dir():
-        return False
-
-    # Check feed.xml content for Pawchive domain or title signature.
-    feed_file = path / "feed.xml"
-    if feed_file.is_file():
-        try:
-            content = feed_file.read_text(encoding="utf-8", errors="replace")
-            if "pawchive.pw" in content or "Pawchive" in content:
-                return True
-        except OSError:
-            pass
-
-    # Check index.html content as fallback signature.
-    index_file = path / "index.html"
-    if index_file.is_file():
-        try:
-            content = index_file.read_text(encoding="utf-8", errors="replace")
-            if "Pawchive" in content:
-                return True
-        except OSError:
-            pass
-
-    return False
+    return rss.directory_has_signature(
+        path,
+        feed_markers=("pawchive.pw", "Pawchive"),
+        page_markers=("Pawchive",),
+    )
 
 
 def prune_untracked_feeds(out_dir: Path, active_keys: set[str]) -> list[str]:
@@ -782,20 +599,7 @@ def prune_untracked_feeds(out_dir: Path, active_keys: set[str]) -> list[str]:
     Returns:
         Sorted list of pruned directory names.
     """
-    if not out_dir.is_dir():
-        return []
-
-    # Iterate through child directories and remove obsolete Pawchive feeds.
-    removed: list[str] = []
-    for child in out_dir.iterdir():
-        if child.is_dir() and child.name not in active_keys and is_pawchive_feed_dir(child):
-            try:
-                shutil.rmtree(child)
-                removed.append(child.name)
-            except OSError as err:
-                print(f"Failed to remove untracked feed directory {child}: {err}")
-
-    return sorted(removed)
+    return rss.prune_untracked_feeds(out_dir, active_keys, is_pawchive_feed_dir)
 
 
 def parse_post_identifier(
@@ -860,18 +664,13 @@ def check_post_flag(
     """
     url = f"{API_BASE}/{service}/user/{creator_id}/post/{post_id}/flag"
 
-    # Query Pawchive flag status endpoint with retries.
-    for _ in range(RETRIES + 1):
-        try:
-            response = session.get(url, timeout=TIMEOUT)
-            if response.status_code == HTTPStatus.OK:
-                return True
-            if response.status_code == HTTPStatus.NOT_FOUND:
-                return False
-        except requests.RequestException:
-            pass
+    # A 404 means "not flagged"; other persistent failures are treated as unset.
+    try:
+        response = rss.fetch(session, url, timeout=TIMEOUT, retries=RETRIES, optional=True)
+    except RuntimeError:
+        return False
 
-    return False
+    return response is not None and response.status_code == HTTPStatus.OK
 
 
 def flag_post_politely(
@@ -936,36 +735,33 @@ def get_latest_patreon_posts(
         f"&sort=-published_at&page[count]={count}"
     )
 
-    # Query Patreon campaign posts endpoint.
-    for _ in range(RETRIES + 1):
-        try:
-            response = session.get(url, timeout=TIMEOUT)
-            response.raise_for_status()
-            items = response.json().get("data", [])
-            results = []
+    # Query the Patreon campaign posts endpoint, tolerating transient failures.
+    try:
+        payload = rss.fetch_json(session, url, timeout=TIMEOUT, retries=RETRIES)
+    except RuntimeError:
+        return []
 
-            for item in items:
-                attrs = item.get("attributes", {})
-                pub_str = attrs.get("published_at")
-                if not pub_str:
-                    continue
+    items = payload.get("data", []) if isinstance(payload, dict) else []
+    results = []
 
-                pub_dt = parse_date(pub_str)
-                default_post_url = f"https://www.patreon.com/posts/{item.get('id')}"
-                post_url = str(attrs.get("url") or default_post_url)
+    for item in items:
+        attrs = item.get("attributes", {})
+        pub_str = attrs.get("published_at")
+        if not pub_str:
+            continue
 
-                results.append({
-                    "id": str(item.get("id")),
-                    "title": str(attrs.get("title") or "Untitled"),
-                    "published": pub_dt,
-                    "url": post_url,
-                })
+        pub_dt = parse_date(pub_str)
+        default_post_url = f"https://www.patreon.com/posts/{item.get('id')}"
+        post_url = str(attrs.get("url") or default_post_url)
 
-            return results
-        except (requests.RequestException, json.JSONDecodeError):
-            pass
+        results.append({
+            "id": str(item.get("id")),
+            "title": str(attrs.get("title") or "Untitled"),
+            "published": pub_dt,
+            "url": post_url,
+        })
 
-    return []
+    return results
 
 
 def sync_and_flag_patreon_posts(
@@ -1037,35 +833,32 @@ def get_latest_cumst_posts(
     """
     url = f"{CUMST_API_BASE}/patreon/user/{campaign_id}/posts?limit={count}"
 
-    # Query cum.st posts endpoint.
-    for _ in range(RETRIES + 1):
-        try:
-            response = session.get(url, timeout=TIMEOUT)
-            response.raise_for_status()
-            items = response.json().get("posts", [])
-            results = []
+    # Query the cum.st posts endpoint, tolerating transient failures.
+    try:
+        payload = rss.fetch_json(session, url, timeout=TIMEOUT, retries=RETRIES)
+    except RuntimeError:
+        return []
 
-            for item in items:
-                pub_val = item.get("published")
-                if pub_val is None:
-                    continue
+    items = payload.get("posts", []) if isinstance(payload, dict) else []
+    results = []
 
-                pub_dt = parse_date(pub_val)
-                post_id = str(item.get("id"))
-                post_url = f"{CUMST_BASE}/patreon/user/{campaign_id}/post/{post_id}"
+    for item in items:
+        pub_val = item.get("published")
+        if pub_val is None:
+            continue
 
-                results.append({
-                    "id": post_id,
-                    "title": str(item.get("title") or "Untitled"),
-                    "published": pub_dt,
-                    "url": post_url,
-                })
+        pub_dt = parse_date(pub_val)
+        post_id = str(item.get("id"))
+        post_url = f"{CUMST_BASE}/patreon/user/{campaign_id}/post/{post_id}"
 
-            return results
-        except (requests.RequestException, json.JSONDecodeError):
-            pass
+        results.append({
+            "id": post_id,
+            "title": str(item.get("title") or "Untitled"),
+            "published": pub_dt,
+            "url": post_url,
+        })
 
-    return []
+    return results
 
 
 def check_cumst_posts(

@@ -2,7 +2,9 @@
 
 This repository follows the standalone-builder structure of `pib_feed`: each
 top-level Python script owns one source and writes its generated files below
-`public/<feed-key>/`.
+`public/<feed-key>/`. Source-agnostic plumbing (HTTP retries, date coercion,
+RSS rendering, merge/eviction, feed writing, and pruning) lives in
+`rss_common.py`; the builders stay thin source-specific adapters.
 
 ## Pawchive Patreon feeds
 

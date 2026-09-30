@@ -3,7 +3,7 @@
 
 Royal Road's syndication feeds provide the latest chapter metadata, but their
 bodies end in ``(...)``.  This builder uses those feeds for discovery, fetches
-only missing chapter pages, and extracts the complete ``.chapter-content`` HTML.
+only missing chapter pages, and extracts the complete ``div.chapter-inner`` HTML.
 
 Architecture & Pipeline Overview:
   +--------------------------+      +--------------------------+
@@ -28,35 +28,26 @@ Architecture & Pipeline Overview:
                                     |  Write feed.xml & index  |
                                     +--------------------------+
 
-Output: public/<feed-key>/feed.xml and public/<feed-key>/index.html.
+Output: public/<feed-key>/feed.xml and public/<feed-key>/index.html.  Shared
+plumbing lives in rss_common.py; this builder keeps source-specific logic.
 """
 from __future__ import annotations
 
 import datetime as dt
-from email.utils import format_datetime, parsedate_to_datetime
-from enum import Enum, auto
-import html
-from http import HTTPStatus
 import os
 from pathlib import Path
 import re
-import shutil
 import time
-from urllib.parse import urljoin, urlparse
 import xml.etree.ElementTree as ET
-from xml.sax.saxutils import escape
 
 from bs4 import BeautifulSoup
 import requests
 
+import rss_common as rss
+
 
 BASE = "https://www.royalroad.com"
-UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/151.0.7922.76 Safari/537.36"
-)
-UTC = dt.timezone.utc
-CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
+CONTENT_NS = rss.CONTENT_NS
 
 FEEDS: list[dict[str, str]] = []
 
@@ -72,19 +63,6 @@ ALLOWED_ATTRS = {
     "alt", "colspan", "datetime", "height", "href", "lang", "loading", "rel",
     "rowspan", "src", "title", "width",
 }
-URL_ATTRS = {"href", "src"}
-
-
-class FetchMode(Enum):
-    """Resource retrieval strictness modes.
-
-    Attributes:
-        REQUIRED: Raise an exception if the resource is missing or returns non-200.
-        OPTIONAL: Return None if the server returns HTTP 404 (e.g. absent remote feed).
-    """
-
-    REQUIRED = auto()
-    OPTIONAL = auto()
 
 
 def make_session() -> requests.Session:
@@ -94,51 +72,7 @@ def make_session() -> requests.Session:
         A requests.Session pre-configured with a browser User-Agent and English
         Accept-Language headers to ensure consistent HTML responses.
     """
-    session = requests.Session()
-
-    # Set browser identity headers for Royal Road requests.
-    session.headers.update({"User-Agent": UA, "Accept-Language": "en"})
-
-    return session
-
-
-def fetch(
-    session: requests.Session,
-    url: str,
-    *,
-    mode: FetchMode = FetchMode.REQUIRED,
-) -> requests.Response | None:
-    """Fetch an HTTP resource with retry handling and optional 404 tolerance.
-
-    Args:
-        session: Active requests HTTP session.
-        url: The HTTP/HTTPS endpoint URL to query.
-        mode: FetchMode controlling whether HTTP 404 is treated as None or an error.
-
-    Returns:
-        Response object on success, or None if mode is OPTIONAL and status is 404.
-
-    Raises:
-        RuntimeError: If all retries fail or an unhandled HTTP error occurs.
-    """
-    last_error = "unknown error"
-
-    # Retry requests to mitigate transient network connectivity or throttling errors.
-    for _ in range(RETRIES + 1):
-        try:
-            response = session.get(url, timeout=TIMEOUT)
-
-            # When optional, 404 indicates an uninitialized deployment rather than failure.
-            if mode == FetchMode.OPTIONAL and response.status_code == HTTPStatus.NOT_FOUND:
-                return None
-
-            response.raise_for_status()
-            return response
-        except requests.RequestException as exc:
-            last_error = str(exc)
-
-    # Exhausted retry count; raise descriptive error.
-    raise RuntimeError(f"failed to fetch {url}: {last_error}")
+    return rss.make_session()
 
 
 def fiction_url(feed: dict) -> str:
@@ -174,14 +108,7 @@ def parse_date(value: str | None) -> dt.datetime:
     Returns:
         UTC datetime object, defaulting to current UTC time if input is None or malformed.
     """
-    if value:
-        try:
-            parsed = parsedate_to_datetime(value)
-            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
-        except (TypeError, ValueError):
-            pass
-
-    return dt.datetime.now(UTC)
+    return rss.parse_rfc822_datetime(value) or dt.datetime.now(rss.UTC)
 
 
 def parse_syndication(document: bytes, feed: dict) -> list[dict]:
@@ -219,25 +146,6 @@ def parse_syndication(document: bytes, feed: dict) -> list[dict]:
         )
 
     return chapters
-
-
-def safe_url(value: str, base_url: str) -> str | None:
-    """Resolve a relative URL against a base URL and enforce allowed URI schemes.
-
-    Args:
-        value: Target URL string from an href or src attribute.
-        base_url: Canonical chapter URL for relative path resolution.
-
-    Returns:
-        Absolute URL string if scheme is http, https, or mailto; None otherwise.
-    """
-    absolute = urljoin(base_url, value.strip())
-
-    # Only permit safe web and email protocols.
-    if urlparse(absolute).scheme.lower() in {"http", "https", "mailto"}:
-        return absolute
-
-    return None
 
 
 def extract_chapter(page: str, chapter_url: str) -> str:
@@ -313,8 +221,8 @@ def extract_chapter(page: str, chapter_url: str) -> str:
                 del tag.attrs[attr]
                 continue
             value = tag.attrs.get(attr)
-            if name in URL_ATTRS and isinstance(value, str):
-                cleaned = safe_url(value, chapter_url)
+            if name in rss.URL_ATTRS and isinstance(value, str):
+                cleaned = rss.safe_url(value, chapter_url)
                 if cleaned is None:
                     del tag.attrs[attr]
                 else:
@@ -328,27 +236,6 @@ def extract_chapter(page: str, chapter_url: str) -> str:
     return body
 
 
-def plain_summary(body: str, limit: int = 500) -> str:
-    """Generate plain-text excerpt from HTML chapter body for RSS <description>.
-
-    Args:
-        body: Chapter HTML content string.
-        limit: Maximum character length of summary before truncation.
-
-    Returns:
-        Plain-text excerpt truncated cleanly at word boundary with ellipsis.
-    """
-    # Convert HTML to normalized plain text.
-    text = BeautifulSoup(body, "html.parser").get_text(" ", strip=True)
-    text = re.sub(r"\s+", " ", text)
-
-    # Truncate at word boundary if text exceeds limit.
-    if len(text) > limit:
-        text = text[:limit].rsplit(" ", 1)[0] + "…"
-
-    return text
-
-
 def render_item(chapter: dict) -> str:
     """Render chapter metadata and body into an RSS 2.0 <item> XML string.
 
@@ -358,20 +245,13 @@ def render_item(chapter: dict) -> str:
     Returns:
         Complete <item>...</item> XML block.
     """
-    # Escape CDATA terminator sequence in HTML body.
-    body = chapter["body_html"]
-    cdata_body = body.replace("]]>", "]]]]><![CDATA[>")
-
-    # Assemble RSS item block.
-    return (
-        "    <item>\n"
-        f"      <title>{escape(chapter['title'])}</title>\n"
-        f"      <link>{escape(chapter['link'])}</link>\n"
-        f"      <guid isPermaLink=\"false\">{escape(chapter['guid'])}</guid>\n"
-        f"      <pubDate>{format_datetime(chapter['date'])}</pubDate>\n"
-        f"      <description>{escape(plain_summary(body))}</description>\n"
-        f"      <content:encoded><![CDATA[{cdata_body}]]></content:encoded>\n"
-        "    </item>"
+    return rss.render_rss_item(
+        title=chapter["title"],
+        link=chapter["link"],
+        guid=chapter["guid"],
+        published=chapter["date"],
+        body=chapter["body_html"],
+        guid_is_permalink=False,
     )
 
 
@@ -385,19 +265,14 @@ def load_existing(session: requests.Session, feed: dict) -> dict[str, dict]:
     Returns:
         Dictionary mapping chapter link URL to chapter dictionary.
     """
-    documents: list[bytes] = []
-
-    # Load local feed file if available.
-    local_path = OUT_DIR / feed["key"] / "feed.xml"
-    if local_path.is_file():
-        documents.append(local_path.read_bytes())
-
-    # Fetch live remote feed XML to retain chapters across deployment runs.
-    if SITE_BASE_URL:
-        feed_url = f"{SITE_BASE_URL}/{feed['key']}/feed.xml"
-        response = fetch(session, feed_url, mode=FetchMode.OPTIONAL)
-        if response is not None:
-            documents.append(response.content)
+    documents = rss.load_feed_documents(
+        session,
+        out_dir=OUT_DIR,
+        key=feed["key"],
+        site_base_url=SITE_BASE_URL,
+        timeout=TIMEOUT,
+        retries=RETRIES,
+    )
 
     # Parse and index existing chapters by link URL.
     chapters: dict[str, dict] = {}
@@ -438,43 +313,23 @@ def merge_new_chapters(
     Returns:
         Tuple of (ordered_chapters_list, newly_fetched_count, evicted_count).
     """
-    merged = dict(existing)
-    known_guids = {chapter["guid"] for chapter in existing.values()}
-    newest_existing = max((chapter["date"] for chapter in existing.values()), default=None)
-    fetched = 0
-
-    # Fetch and append unseen chapters strictly newer than latest retained item.
-    for chapter in listing:
-        if chapter["link"] in merged or chapter["guid"] in known_guids:
-            continue
-        if newest_existing is not None and chapter["date"] <= newest_existing:
-            continue
-
-        new_chapter = dict(chapter)
-        new_chapter["body_html"] = body_loader(new_chapter)
-        merged[new_chapter["link"]] = new_chapter
-        known_guids.add(new_chapter["guid"])
-        fetched += 1
-
-    # Order newest first and evict oldest items beyond cap.
-    ordered = sorted(
-        merged.values(),
-        key=lambda chapter: (chapter["date"], chapter["guid"]),
-        reverse=True,
+    merged, fetched, evicted = rss.merge_new_items(
+        {link: (chapter["date"], chapter) for link, chapter in existing.items()},
+        listing,
+        identity=lambda chapter: chapter["link"],
+        published=lambda chapter: chapter["date"],
+        load=lambda chapter: {**chapter, "body_html": body_loader(chapter)},
+        limit=ITEM_LIMIT,
+        guid=lambda chapter: chapter.get("guid"),
+        existing_guids={chapter["guid"] for chapter in existing.values()},
     )
-    evicted = max(0, len(ordered) - ITEM_LIMIT)
 
-    return ordered[:ITEM_LIMIT], fetched, evicted
+    return [chapter for _, chapter in merged.values()], fetched, evicted
 
 
 # Format feed title as 'novel title - Author'.
 def feed_title(feed: dict) -> str:
-    title = feed.get("title")
-    author = feed.get("author")
-    if title and author:
-        return f"{title} - {author}"
-
-    return title or author or ""
+    return rss.feed_title(feed)
 
 
 def build_feed_xml(feed: dict, chapters: list[dict]) -> str:
@@ -488,30 +343,16 @@ def build_feed_xml(feed: dict, chapters: list[dict]) -> str:
         Complete UTF-8 encoded RSS 2.0 XML document string.
     """
     # Build channel metadata and optional self atom:link.
-    now = format_datetime(dt.datetime.now(UTC))
-    self_link = (
-        f'    <atom:link href="{escape(SITE_BASE_URL + "/" + feed["key"] + "/feed.xml")}" '
-        'rel="self" type="application/rss+xml" />\n'
-        if SITE_BASE_URL
-        else ""
-    )
     title = feed_title(feed)
     description = f"Unofficial full-text feed of {feed['title']} by {feed['author']} on Royal Road."
+    self_url = f"{SITE_BASE_URL}/{feed['key']}/feed.xml" if SITE_BASE_URL else None
 
-    # Assemble complete RSS document.
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" '
-        'xmlns:atom="http://www.w3.org/2005/Atom">\n'
-        "  <channel>\n"
-        f"    <title>{escape(title)}</title>\n"
-        f"    <link>{escape(fiction_url(feed))}</link>\n"
-        f"    <description>{escape(description)}</description>\n"
-        "    <language>en</language>\n"
-        f"    <lastBuildDate>{now}</lastBuildDate>\n"
-        f"{self_link}"
-        + "\n".join(render_item(chapter) for chapter in chapters)
-        + "\n  </channel>\n</rss>\n"
+    return rss.build_feed_document(
+        title=title,
+        link=fiction_url(feed),
+        description=description,
+        item_xml=(render_item(chapter) for chapter in chapters),
+        self_url=self_url,
     )
 
 
@@ -523,24 +364,15 @@ def write_feed(feed: dict, xml: str, count: int) -> None:
         xml: Generated RSS XML document string.
         count: Total number of chapters contained in the feed.
     """
-    # Create target directory.
-    directory = OUT_DIR / feed["key"]
-    directory.mkdir(parents=True, exist_ok=True)
-
-    # Write RSS XML file.
-    (directory / "feed.xml").write_text(xml, encoding="utf-8")
-
-    # Write HTML index page.
-    title = feed_title(feed)
-    page = (
-        "<!doctype html><meta charset='utf-8'>"
-        f"<title>{html.escape(title)} — Royal Road RSS</title>"
-        f"<h1>{html.escape(title)} — Royal Road RSS</h1>"
-        "<p>Unofficial full-text feed generated from Royal Road.</p>"
-        "<p><a href='feed.xml'>Subscribe to feed.xml</a></p>"
-        f"<p>{count} items.</p>"
+    rss.write_feed_files(
+        OUT_DIR,
+        feed["key"],
+        xml,
+        title=feed_title(feed),
+        page_suffix="Royal Road RSS",
+        description="Unofficial full-text feed generated from Royal Road.",
+        count=count,
     )
-    (directory / "index.html").write_text(page, encoding="utf-8")
 
 
 def is_royalroad_feed_dir(path: Path) -> bool:
@@ -552,34 +384,12 @@ def is_royalroad_feed_dir(path: Path) -> bool:
     Returns:
         True if the directory contains Royal Road signatures in feed.xml or index.html.
     """
-    if not path.is_dir():
-        return False
-
-    # Check feed.xml content for Royal Road domain or title signature.
-    feed_file = path / "feed.xml"
-    if feed_file.is_file():
-        try:
-            content = feed_file.read_text(encoding="utf-8", errors="replace")
-            if "pawchive.pw" in content:
-                return False
-            if "royalroad.com" in content or "Royal Road" in content:
-                return True
-        except OSError:
-            pass
-
-    # Check index.html content as fallback.
-    index_file = path / "index.html"
-    if index_file.is_file():
-        try:
-            content = index_file.read_text(encoding="utf-8", errors="replace")
-            if "Pawchive" in content:
-                return False
-            if "Royal Road" in content:
-                return True
-        except OSError:
-            pass
-
-    return False
+    return rss.directory_has_signature(
+        path,
+        feed_markers=("royalroad.com", "Royal Road"),
+        page_markers=("Royal Road",),
+        exclude=("pawchive.pw", "Pawchive"),
+    )
 
 
 def prune_untracked_feeds(out_dir: Path, active_keys: set[str]) -> list[str]:
@@ -592,20 +402,7 @@ def prune_untracked_feeds(out_dir: Path, active_keys: set[str]) -> list[str]:
     Returns:
         Sorted list of pruned directory names.
     """
-    if not out_dir.is_dir():
-        return []
-
-    # Find and delete untracked Royal Road directories.
-    removed: list[str] = []
-    for child in out_dir.iterdir():
-        if child.is_dir() and child.name not in active_keys and is_royalroad_feed_dir(child):
-            try:
-                shutil.rmtree(child)
-                removed.append(child.name)
-            except OSError as err:
-                print(f"Failed to remove untracked feed directory {child}: {err}")
-
-    return sorted(removed)
+    return rss.prune_untracked_feeds(out_dir, active_keys, is_royalroad_feed_dir)
 
 
 def run_feed(session: requests.Session, feed: dict) -> int:
@@ -622,7 +419,9 @@ def run_feed(session: requests.Session, feed: dict) -> int:
 
     # Load existing items and fetch latest syndication feed.
     existing = load_existing(session, feed)
-    listing = fetch(session, syndication_url(feed))
+    listing = rss.fetch(
+        session, syndication_url(feed), timeout=TIMEOUT, retries=RETRIES
+    )
     assert listing is not None
     chapters = parse_syndication(listing.content, feed)
     if not chapters:
@@ -635,7 +434,7 @@ def run_feed(session: requests.Session, feed: dict) -> int:
         nonlocal detail_fetches
         if detail_fetches:
             time.sleep(REQUEST_DELAY)
-        response = fetch(session, chapter["link"])
+        response = rss.fetch(session, chapter["link"], timeout=TIMEOUT, retries=RETRIES)
         assert response is not None
         detail_fetches += 1
         return extract_chapter(response.text, chapter["link"])
