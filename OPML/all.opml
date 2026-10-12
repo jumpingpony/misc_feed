@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>All miscellaneous feeds (unofficial)</title>
+  </head>
+  <body>
+    <outline text="Pawchive Patreon" title="Pawchive Patreon">
+      <outline type="rss" text="Hell Difficulty Tutorial - Cerim" title="Hell Difficulty Tutorial - Cerim" xmlUrl="https://jumpingpony.github.io/misc_feed/cerim/hdt/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/31891971"/>
+    </outline>
+    <outline text="ePubLibre English" title="ePubLibre English">
+      <outline type="rss" text="ePubLibre - new English books" title="ePubLibre - new English books" xmlUrl="https://jumpingpony.github.io/misc_feed/epublibre/en/feed.xml" htmlUrl="https://www.epublibre.org/catalogo/index/1/nuevo/todos/sin/5"/>
+    </outline>
+  </body>
+</opml>
