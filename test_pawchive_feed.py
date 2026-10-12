@@ -1,0 +1,620 @@
+from __future__ import annotations
+
+import datetime as dt
+from email.utils import format_datetime
+from http import HTTPStatus
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import Mock, patch
+import xml.etree.ElementTree as ET
+
+import pawchive_feed as feed
+
+
+class PawchiveFeedTests(unittest.TestCase):
+    # Unit tests for Pawchive feed builder and Patreon sync.
+
+    @staticmethod
+    def make_post(post_id, day):
+        # Construct synthetic Pawchive post dictionary for testing.
+        return {
+            "id": str(post_id),
+            "user": "34",
+            "service": "patreon",
+            "title": f"Chapter {post_id}",
+            "content": f"<p>Body {post_id}</p>",
+            "published": f"2026-08-{day:02d}T10:00:00",
+            "attachments": [],
+        }
+
+    def test_feed_defs_unique(self):
+        # Verify feed configurations contain unique keys and creator IDs.
+        self.assertEqual(2, len(feed.FEEDS))
+        self.assertEqual({"cerim/hdt", "void/thr"}, {item["key"] for item in feed.FEEDS})
+        self.assertEqual(2, len({item["key"] for item in feed.FEEDS}))
+        self.assertEqual(2, len({item["creator_id"] for item in feed.FEEDS}))
+        self.assertEqual(2, len({item["campaign_id"] for item in feed.FEEDS}))
+        self.assertEqual(2, len({item["title"] for item in feed.FEEDS}))
+        self.assertEqual(2, len({item["author"] for item in feed.FEEDS}))
+        self.assertEqual(2, len({item["title_filter"] for item in feed.FEEDS}))
+
+    def test_feed_title_format(self):
+        # Verify feed title follows 'novel title - Author' format.
+        for item in feed.FEEDS:
+            self.assertEqual(f"{item['title']} - {item['author']}", feed.feed_title(item))
+
+    def test_build_chapter_body_only(self):
+        # Verify chapter builder sanitizes HTML, strips navigation, and keeps author notes.
+        post = {
+            "id": "12",
+            "user": "34",
+            "service": "patreon",
+            "content": (
+                '<blockquote><p><a href="https://example.com/previous">'
+                'Previous Chapter</a></p></blockquote>'
+                '<p>Hello <em>world</em>. <a href="/map">Map</a></p>'
+                '<script>bad()</script><foo>x</foo>'
+                '<p>***</p><p><em>Author Note: buy the book.</em></p>'
+                '<p><a href="https://example.com/next">Next chapter</a></p>'
+            ),
+            "attachments": [
+                {"name": "cover.JPG", "path": "/aa/cover.jpg"},
+                {"name": "chapter.epub", "path": "bb/chapter.epub"},
+            ],
+        }
+
+        # Build chapter HTML.
+        body = feed.build_chapter(post)
+
+        # Assert allowed tags preserved and forbidden tags removed.
+        self.assertIn("<p>Hello <em>world</em>.", body)
+        self.assertNotIn("bad()", body)
+        self.assertIn("&lt;foo&gt;x&lt;/foo&gt;", body)
+        self.assertIn('href="https://www.patreon.com/map"', body)
+        self.assertNotIn("Previous Chapter", body)
+        self.assertNotIn("Next chapter", body)
+        self.assertIn("Author Note: buy the book.", body)
+        self.assertIn("***", body)
+        self.assertNotIn("Attachments", body)
+        self.assertNotIn("cover.jpg", body)
+        self.assertNotIn("chapter.epub", body)
+
+    def test_feed_contains_full_body(self):
+        # Verify XML feed includes complete chapter HTML in content:encoded.
+        post = {
+            "id": "12",
+            "user": "34",
+            "service": "patreon",
+            "title": "Chapter 12",
+            "content": "<p>The complete chapter.</p>",
+            "published": "2026-08-01T10:30:00",
+            "attachments": [],
+        }
+
+        # Render item and assemble XML document.
+        rendered = feed.render_item(post)
+        items = {
+            feed.post_permalink(post): (
+                dt.datetime(2026, 8, 1, tzinfo=dt.timezone.utc),
+                rendered,
+            )
+        }
+        xml = feed.build_feed_xml(feed.FEEDS[0], "Author", items)
+
+        # Parse XML and inspect content:encoded element.
+        root = ET.fromstring(xml)
+        encoded = root.find(
+            "./channel/item/{http://purl.org/rss/1.0/modules/content/}encoded"
+        )
+        self.assertIsNotNone(encoded)
+        self.assertEqual("<p>The complete chapter.</p>", encoded.text)
+
+    def test_noop_merge_renders_zero(self):
+        # Verify merging existing posts triggers zero new renders.
+        posts = [self.make_post(i, i) for i in range(1, 4)]
+        existing = {
+            feed.post_permalink(post): (
+                feed.parse_date(post["published"]),
+                feed.render_item(post),
+            )
+            for post in posts
+        }
+        renderer = Mock(side_effect=feed.render_item)
+
+        # Merge identical posts with mocked renderer.
+        with patch.object(feed, "ITEM_LIMIT", 3):
+            merged, rendered, evicted = feed.merge_new_posts(
+                existing, list(reversed(posts)), renderer
+            )
+
+        self.assertEqual(existing, merged)
+        self.assertEqual((0, 0), (rendered, evicted))
+        renderer.assert_not_called()
+
+    def test_merge_evicts_oldest(self):
+        # Verify newest post is added and oldest post is evicted when exceeding limit.
+        old_posts = [self.make_post(i, i) for i in range(1, 4)]
+        new_post = self.make_post(4, 4)
+        stale_post = self.make_post(99, 1)
+        existing = {
+            feed.post_permalink(post): (
+                feed.parse_date(post["published"]),
+                feed.render_item(post),
+            )
+            for post in old_posts
+        }
+        renderer = Mock(side_effect=feed.render_item)
+        listing = [new_post, new_post, old_posts[-1], stale_post]
+
+        # Merge with 3-item limit.
+        with patch.object(feed, "ITEM_LIMIT", 3):
+            merged, rendered, evicted = feed.merge_new_posts(
+                existing, listing, renderer
+            )
+
+        self.assertEqual((1, 1), (rendered, evicted))
+        self.assertEqual(
+            {feed.post_permalink(post) for post in (old_posts[1], old_posts[2], new_post)},
+            set(merged),
+        )
+        renderer.assert_called_once_with(new_post)
+
+    def test_existing_xml_roundtrip(self):
+        # Verify existing XML item block can be parsed without loss of content.
+        post = self.make_post(7, 7)
+        identity = feed.post_permalink(post)
+        original = feed.render_item(post)
+        document = f"<rss><channel>{original}</channel></rss>"
+
+        # Parse items from document.
+        parsed = feed.parse_existing_items(
+            document, feed.title_filter_for(feed.FEEDS[0])
+        )
+        self.assertEqual([identity], list(parsed))
+        self.assertEqual(original.strip(), parsed[identity][1])
+
+    def test_parse_existing_skips_non_chapter(self):
+        # Verify retained history drops items whose titles lack the word "chapter".
+        chapter = self.make_post(7, 7)
+        announcement = {**self.make_post(8, 8), "title": "October wrap-up"}
+        document = (
+            "<rss><channel>"
+            + feed.render_item(chapter)
+            + feed.render_item(announcement)
+            + "</channel></rss>"
+        )
+
+        parsed = feed.parse_existing_items(
+            document, feed.title_filter_for(feed.FEEDS[0])
+        )
+
+        self.assertEqual([feed.post_permalink(chapter)], list(parsed))
+
+    def test_collect_posts_chapters_only(self):
+        # Verify collect_posts drops posts whose titles lack the word "chapter".
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: [
+                self.make_post(20, 20),
+                {**self.make_post(21, 21), "title": "October wrap-up"},
+            ],
+        )
+
+        posts = feed.collect_posts(
+            session, "31891971", title_filter=feed.title_filter_for(feed.FEEDS[0])
+        )
+
+        self.assertEqual(["20"], [post["id"] for post in posts])
+
+    def test_void_herald_title_filter(self):
+        # Verify numbered Void Herald posts match while polls and art posts drop.
+        matcher = feed.title_filter_for(feed.FEEDS[1])
+        kept = [
+            "The Hundred Reigns 271: King of Spiders (13) ",
+            "The Hundred Reigns 258: Liminal Space ",
+        ]
+        dropped = [
+            "New HR Poll: Choose your path",
+            "Hundred Reigns Art Gallery: Norbelle's Eidolons Art",
+        ]
+
+        for title in kept:
+            self.assertTrue(feed.matches_title_filter(title, matcher), title)
+        for title in dropped:
+            self.assertFalse(feed.matches_title_filter(title, matcher), title)
+
+    def test_parse_post_identifier(self):
+        # Verify identifier parser handles raw IDs, Patreon URLs, and Pawchive URLs.
+        # Plain ID
+        self.assertEqual(
+            ("patreon", "31891971", "167183185"),
+            feed.parse_post_identifier("167183185"),
+        )
+        # Patreon simple URL
+        self.assertEqual(
+            ("patreon", "31891971", "167183185"),
+            feed.parse_post_identifier("https://www.patreon.com/posts/167183185"),
+        )
+        # Patreon creator slug URL
+        self.assertEqual(
+            ("patreon", "31891971", "167183185"),
+            feed.parse_post_identifier(
+                "https://www.patreon.com/cerim/posts/chapter-910-four-167183185"
+            ),
+        )
+        # Pawchive URL
+        self.assertEqual(
+            ("patreon", "31891971", "167183185"),
+            feed.parse_post_identifier(
+                "https://pawchive.pw/patreon/user/31891971/post/167183185"
+            ),
+        )
+        with self.assertRaises(ValueError):
+            feed.parse_post_identifier("invalid_url_or_id")
+
+    def test_check_post_flag(self):
+        # Verify flag status endpoint returns True on 200 and False on 404.
+        session = Mock()
+        session.get.return_value = Mock(status_code=HTTPStatus.OK)
+        self.assertTrue(feed.check_post_flag(session, "patreon", "31891971", "123"))
+
+        session.get.return_value = Mock(status_code=HTTPStatus.NOT_FOUND)
+        self.assertFalse(feed.check_post_flag(session, "patreon", "31891971", "123"))
+
+    def test_flag_skips_if_flagged(self):
+        # Verify polite flagger skips POST when post is already flagged.
+        session = Mock()
+        # GET returns 200 (already flagged)
+        session.get.return_value = Mock(status_code=HTTPStatus.OK)
+        ok, reason = feed.flag_post_politely(session, "patreon", "31891971", "123")
+        self.assertTrue(ok)
+        self.assertEqual("already flagged", reason)
+        session.post.assert_not_called()
+
+    def test_flag_sets_when_unset(self):
+        # Verify polite flagger sends POST when post is not yet flagged.
+        session = Mock()
+        # GET returns 404 (unset), POST returns 201 (success)
+        session.get.return_value = Mock(status_code=HTTPStatus.NOT_FOUND)
+        session.post.return_value = Mock(status_code=HTTPStatus.CREATED)
+        ok, reason = feed.flag_post_politely(session, "patreon", "31891971", "123")
+        self.assertTrue(ok)
+        self.assertEqual("newly flagged", reason)
+        session.post.assert_called_once()
+
+    def test_flag_handles_statuses(self):
+        # Verify polite flagger maps HTTP conflict and unauthorized statuses.
+        session = Mock()
+        session.get.return_value = Mock(status_code=HTTPStatus.NOT_FOUND)
+        session.post.return_value = Mock(status_code=HTTPStatus.CONFLICT)
+        ok, reason = feed.flag_post_politely(session, "patreon", "31891971", "123")
+        self.assertTrue(ok)
+        self.assertIn("already flagged", reason)
+
+        session.post.return_value = Mock(status_code=HTTPStatus.UNAUTHORIZED)
+        ok, reason = feed.flag_post_politely(session, "patreon", "31891971", "123")
+        self.assertFalse(ok)
+        self.assertIn("unauthorized", reason)
+
+    def test_get_latest_patreon_posts(self):
+        # Verify parsing of post payloads from Patreon campaign API.
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: {
+                "data": [
+                    {
+                        "id": "167183185",
+                        "attributes": {
+                            "title": "Chapter 910",
+                            "published_at": "2026-08-20T08:44:47.000+00:00",
+                            "url": "https://www.patreon.com/posts/167183185",
+                        },
+                    }
+                ]
+            },
+        )
+        posts = feed.get_latest_patreon_posts(session, "10143762")
+        self.assertEqual(1, len(posts))
+        self.assertEqual("167183185", posts[0]["id"])
+        self.assertEqual("Chapter 910", posts[0]["title"])
+        self.assertEqual(
+            dt.datetime(2026, 8, 20, 8, 44, 47, tzinfo=dt.timezone.utc),
+            posts[0]["published"],
+        )
+
+    def test_sync_flags_newer_only(self):
+        # Verify sync only flags posts published after newest retained date.
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: {
+                "data": [
+                    {
+                        "id": "200",
+                        "attributes": {
+                            "title": "New Ch",
+                            "published_at": "2026-08-20T10:00:00.000+00:00",
+                        },
+                    },
+                    {
+                        "id": "100",
+                        "attributes": {
+                            "title": "Old Ch",
+                            "published_at": "2026-08-19T10:00:00.000+00:00",
+                        },
+                    },
+                ]
+            },
+        )
+        feed_config = {
+            "key": "cerim",
+            "creator_id": "31891971",
+            "campaign_id": "10143762",
+        }
+        newest_pawchive_date = dt.datetime(
+            2026, 8, 19, 12, 0, 0, tzinfo=dt.timezone.utc
+        )
+
+        # Execute Patreon sync.
+        with patch(
+            "pawchive_feed.flag_post_politely", return_value=(True, "newly flagged")
+        ) as mock_flag:
+            flagged = feed.sync_and_flag_patreon_posts(
+                session, feed_config, newest_pawchive_date
+            )
+            self.assertEqual(1, len(flagged))
+            self.assertEqual("200", flagged[0]["id"])
+            mock_flag.assert_called_once_with(
+                session, "patreon", "31891971", "200"
+            )
+
+    def test_sync_skips_imported(self):
+        # Verify sync skips posts present in known imported IDs list.
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: {
+                "data": [
+                    {
+                        "id": "200",
+                        "attributes": {
+                            "title": "Already Imported Ch",
+                            "published_at": "2026-08-20T10:00:00.000+00:00",
+                        },
+                    },
+                ]
+            },
+        )
+        feed_config = {
+            "key": "cerim",
+            "creator_id": "31891971",
+            "campaign_id": "10143762",
+        }
+        newest_pawchive_date = dt.datetime(
+            2026, 8, 19, 12, 0, 0, tzinfo=dt.timezone.utc
+        )
+        known_imported_ids = {"200"}
+
+        # Execute Patreon sync with imported post ID.
+        with patch("pawchive_feed.flag_post_politely") as mock_flag:
+            flagged = feed.sync_and_flag_patreon_posts(
+                session,
+                feed_config,
+                newest_pawchive_date,
+                known_imported_ids=known_imported_ids,
+            )
+            self.assertEqual(0, len(flagged))
+            mock_flag.assert_not_called()
+
+    def test_prune_untracked_dirs(self):
+        # Verify untracked Pawchive directories are pruned while retaining others.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = Path(tmpdir)
+            active_dir = out_dir / "cerim"
+            active_dir.mkdir()
+            (active_dir / "feed.xml").write_text(
+                "<rss><channel><title>cerim — Pawchive</title>"
+                "<link>https://pawchive.pw</link></channel></rss>"
+            )
+
+            untracked_pawchive = out_dir / "old-feed"
+            untracked_pawchive.mkdir()
+            (untracked_pawchive / "feed.xml").write_text(
+                "<rss><channel><title>old — Pawchive</title>"
+                "<link>https://pawchive.pw</link></channel></rss>"
+            )
+
+            other_dir = out_dir / "zenith-of-sorcery"
+            other_dir.mkdir()
+            (other_dir / "feed.xml").write_text(
+                "<rss><channel><title>Zenith — Royal Road</title>"
+                "<link>https://www.royalroad.com</link></channel></rss>"
+            )
+
+            # Prune directories not in active keys.
+            pruned = feed.prune_untracked_feeds(out_dir, {"cerim"})
+            self.assertEqual(["old-feed"], pruned)
+            self.assertTrue(active_dir.exists())
+            self.assertFalse(untracked_pawchive.exists())
+            self.assertTrue(other_dir.exists())
+
+    def test_parse_date_numeric(self):
+        # Verify parse_date accepts integer and float unix timestamps.
+        ts = 1790585982
+        parsed = feed.parse_date(ts)
+        self.assertEqual(dt.datetime(2026, 9, 28, 8, 59, 42, tzinfo=dt.timezone.utc), parsed)
+
+    def test_parse_date_passthrough(self):
+        # Verify already-parsed datetimes are returned unchanged, not replaced with now.
+        value = dt.datetime(2026, 8, 20, 8, 44, 47, tzinfo=dt.timezone.utc)
+        self.assertIs(value, feed.parse_date(value))
+
+    def test_merge_preserves_publication_dates(self):
+        # Verify collect_posts-style datetime values survive merge and rendering.
+        post = self.make_post(5, 5)
+        post["published"] = feed.parse_date(post["published"])
+
+        merged, rendered, _ = feed.merge_new_posts({}, [post])
+
+        self.assertEqual(1, rendered)
+        self.assertEqual(post["published"], merged[feed.post_permalink(post)][0])
+        self.assertIn(
+            f"<pubDate>{format_datetime(post['published'])}</pubDate>",
+            merged[feed.post_permalink(post)][1],
+        )
+
+    def test_get_latest_cumst_posts(self):
+        # Verify fetching and parsing posts from cum.st API.
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: {
+                "posts": [
+                    {
+                        "id": "170881051",
+                        "title": "Chapter 938 - The Wraith",
+                        "published": 1790671008,
+                        "added": 1790675000,
+                    }
+                ]
+            },
+        )
+
+        posts = feed.get_latest_cumst_posts(session, "10143762", count=5)
+        self.assertEqual(1, len(posts))
+        self.assertEqual("170881051", posts[0]["id"])
+        self.assertEqual("Chapter 938 - The Wraith", posts[0]["title"])
+        self.assertEqual("https://cum.st/patreon/user/10143762/post/170881051", posts[0]["url"])
+        session.get.assert_called_once_with(
+            "https://cum.st/api/v1/patreon/user/10143762/posts?limit=5",
+            timeout=feed.TIMEOUT,
+        )
+
+    def test_check_cumst_posts_detects_newer(self):
+        # Verify check_cumst_posts identifies posts newer than newest retained item.
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: {
+                "posts": [
+                    {
+                        "id": "300",
+                        "title": "New cum.st Chapter",
+                        "published": 1787260800,
+                    },
+                    {
+                        "id": "299",
+                        "title": "Old cum.st Chapter",
+                        "published": 1787174400,
+                    },
+                ]
+            },
+        )
+        feed_config = {
+            "key": "cerim",
+            "campaign_id": "10143762",
+            "creator_id": "31891971",
+        }
+        newest_date = dt.datetime(2026, 8, 20, 0, 0, 0, tzinfo=dt.timezone.utc)
+
+        # 1787260800 is 2026-08-21 00:00:00 UTC (newer)
+        # 1787174400 is 2026-08-20 00:00:00 UTC (not newer)
+        newer = feed.check_cumst_posts(session, feed_config, newest_date)
+        self.assertEqual(1, len(newer))
+        self.assertEqual("300", newer[0]["id"])
+
+    def test_check_cumst_skips_known(self):
+        # Verify check_cumst_posts skips posts present in known imported IDs.
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK,
+            json=lambda: {
+                "posts": [
+                    {
+                        "id": "300",
+                        "title": "Already Known Chapter",
+                        "published": 1787260800,
+                    }
+                ]
+            },
+        )
+        feed_config = {
+            "key": "cerim",
+            "campaign_id": "10143762",
+            "creator_id": "31891971",
+        }
+        newest_date = dt.datetime(2026, 8, 19, 0, 0, 0, tzinfo=dt.timezone.utc)
+        known_imported_ids = {"300"}
+
+        newer = feed.check_cumst_posts(
+            session, feed_config, newest_date, known_imported_ids=known_imported_ids
+        )
+        self.assertEqual(0, len(newer))
+
+    def test_check_cumst_cli(self):
+        # Verify --check-cumst CLI argument invokes check_cumst_posts on all feeds.
+        with patch("pawchive_feed.check_cumst_posts", return_value=[]) as mock_check, \
+             patch("pawchive_feed.load_existing", return_value={}):
+            ret = feed.main(["--check-cumst"])
+            self.assertEqual(0, ret)
+            self.assertEqual(len(feed.FEEDS), mock_check.call_count)
+
+    def test_item_links_direct_to_patreon(self):
+        # Verify item link and guid direct to canonical Patreon chapter URL.
+        post = self.make_post(938, 29)
+        rendered = feed.render_item(post)
+        expected_url = "https://www.patreon.com/posts/938"
+
+        self.assertIn(f"<link>{expected_url}</link>", rendered)
+        self.assertIn(f'<guid isPermaLink="true">{expected_url}</guid>', rendered)
+
+    def test_cumst_first_then_pawchive_dedup(self):
+        # Verify post first imported from cum.st is not duplicated when later seen on Pawchive.
+        cumst_post = {
+            "id": "938",
+            "title": "Chapter 938 - The Wraith",
+            "published": "2026-09-29T08:36:48",
+            "content": "<p>Content from cum.st</p>",
+            "user": "31891971",
+            "service": "patreon",
+            "url": "https://www.patreon.com/posts/938",
+        }
+
+        # Step 1: Render feed containing post from cum.st.
+        items, rendered_count, _ = feed.merge_new_posts({}, [cumst_post])
+        self.assertEqual(1, rendered_count)
+        self.assertEqual(1, len(items))
+
+        # Build feed XML.
+        xml_doc = feed.build_feed_xml(feed.FEEDS[0], "Cerim", items)
+
+        # Step 2: Next run loads existing XML document.
+        existing_parsed = feed.parse_existing_items(
+            xml_doc, feed.title_filter_for(feed.FEEDS[0])
+        )
+        self.assertIn("https://www.patreon.com/posts/938", existing_parsed)
+
+        # Step 3: Pawchive later releases Chapter 938 with identical post ID.
+        pawchive_post = {
+            "id": "938",
+            "title": "Chapter 938 - The Wraith",
+            "published": "2026-09-29T08:36:48",
+            "content": "<p>Content from Pawchive</p>",
+            "user": "31891971",
+            "service": "patreon",
+            "url": "https://pawchive.pw/patreon/user/31891971/post/938",
+        }
+
+        # Merge new Pawchive post against existing feed items.
+        merged_items, new_renders, _ = feed.merge_new_posts(existing_parsed, [pawchive_post])
+        self.assertEqual(0, new_renders)
+        self.assertEqual(1, len(merged_items))
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
