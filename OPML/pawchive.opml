@@ -7,6 +7,7 @@
     <outline text="Pawchive Patreon" title="Pawchive Patreon">
       <outline type="rss" text="Hell Difficulty Tutorial - Cerim" title="Hell Difficulty Tutorial - Cerim" xmlUrl="https://jumpingpony.github.io/misc_feed/cerim/hdt/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/31891971"/>
       <outline type="rss" text="The Hundred Reigns - Void Herald" title="The Hundred Reigns - Void Herald" xmlUrl="https://jumpingpony.github.io/misc_feed/void/thr/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/16493499"/>
+      <outline type="rss" text="The Archmage Coefficient - onedayokay" title="The Archmage Coefficient - onedayokay" xmlUrl="https://jumpingpony.github.io/misc_feed/onedayokay/tac/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/207666427"/>
     </outline>
   </body>
 </opml>

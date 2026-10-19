@@ -30,14 +30,17 @@ class PawchiveFeedTests(unittest.TestCase):
 
     def test_feed_defs_unique(self):
         # Verify feed configurations contain unique keys and creator IDs.
-        self.assertEqual(2, len(feed.FEEDS))
-        self.assertEqual({"cerim/hdt", "void/thr"}, {item["key"] for item in feed.FEEDS})
-        self.assertEqual(2, len({item["key"] for item in feed.FEEDS}))
-        self.assertEqual(2, len({item["creator_id"] for item in feed.FEEDS}))
-        self.assertEqual(2, len({item["campaign_id"] for item in feed.FEEDS}))
-        self.assertEqual(2, len({item["title"] for item in feed.FEEDS}))
-        self.assertEqual(2, len({item["author"] for item in feed.FEEDS}))
-        self.assertEqual(2, len({item["title_filter"] for item in feed.FEEDS}))
+        self.assertEqual(3, len(feed.FEEDS))
+        self.assertEqual(
+            {"cerim/hdt", "void/thr", "onedayokay/tac"},
+            {item["key"] for item in feed.FEEDS},
+        )
+        self.assertEqual(3, len({item["key"] for item in feed.FEEDS}))
+        self.assertEqual(3, len({item["creator_id"] for item in feed.FEEDS}))
+        self.assertEqual(3, len({item["campaign_id"] for item in feed.FEEDS}))
+        self.assertEqual(3, len({item["title"] for item in feed.FEEDS}))
+        self.assertEqual(3, len({item["author"] for item in feed.FEEDS}))
+        self.assertEqual(3, len({item["title_filter"] for item in feed.FEEDS}))
 
     def test_feed_title_format(self):
         # Verify feed title follows 'novel title - Author' format.
@@ -218,6 +221,24 @@ class PawchiveFeedTests(unittest.TestCase):
         dropped = [
             "New HR Poll: Choose your path",
             "Hundred Reigns Art Gallery: Norbelle's Eidolons Art",
+        ]
+
+        for title in kept:
+            self.assertTrue(feed.matches_title_filter(title, matcher), title)
+        for title in dropped:
+            self.assertFalse(feed.matches_title_filter(title, matcher), title)
+
+    def test_onedayokay_title_filter(self):
+        # Verify numbered Archmage Coefficient posts match while updates drop.
+        matcher = feed.title_filter_for(feed.FEEDS[2])
+        kept = [
+            "1 - Master Elric and the Spirit Orbs",
+            "Chapter 170 - Welcome",
+            "64 - ***",
+        ]
+        dropped = [
+            "Update",
+            "End of Month Poll",
         ]
 
         for title in kept:
@@ -557,6 +578,7 @@ class PawchiveFeedTests(unittest.TestCase):
     def test_check_cumst_cli(self):
         # Verify --check-cumst CLI argument invokes check_cumst_posts on all feeds.
         with patch("pawchive_feed.check_cumst_posts", return_value=[]) as mock_check, \
+             patch("pawchive_feed.get_feed_sync_baseline", return_value=(None, set())), \
              patch("pawchive_feed.load_existing", return_value={}):
             ret = feed.main(["--check-cumst"])
             self.assertEqual(0, ret)

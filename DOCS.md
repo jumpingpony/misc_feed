@@ -15,6 +15,7 @@ archived by Pawchive:
 |------|-------|------------------|--------------|
 | cerim/hdt | Hell Difficulty Tutorial | Patreon `31891971` (Cerim) | [feed.xml](https://jumpingpony.github.io/misc_feed/cerim/hdt/feed.xml) |
 | void/thr | The Hundred Reigns | Patreon `16493499` (Void Herald) | [feed.xml](https://jumpingpony.github.io/misc_feed/void/thr/feed.xml) |
+| onedayokay/tac | The Archmage Coefficient | Patreon `207666427` (onedayokay) | [feed.xml](https://jumpingpony.github.io/misc_feed/onedayokay/tac/feed.xml) |
 
 Post discovery and complete post objects come from the
 [Pawchive v1 API](https://pawchive.pw/api/schema). Chapter extraction uses the
@@ -24,14 +25,15 @@ Author notes, their links, and separators remain part of the chapter. The
 remaining chapter HTML is stored in each item's `<content:encoded>` element.
 
 Each feed retains the 30 newest chapter posts. A per-feed title pattern decides
-what counts as a chapter: `cerim/hdt` keeps titles containing "chapter", while
-`void/thr` keeps numbered `The Hundred Reigns <n>: ...` posts, so polls, art
-posts, and announcements are dropped. Pawchive enforces 50-result API pages, so
-the builder requests only the first page for each creator. It loads the
-published RSS first, renders only absent posts whose publication time is newer
-than the newest retained item, merges them by permalink, and trims the oldest
-items only after merging. It does not crawl listing HTML or fetch individual
-post pages.
+what counts as a chapter: `cerim/hdt` keeps titles containing "chapter",
+`void/thr` keeps numbered `The Hundred Reigns <n>: ...` posts, and
+`onedayokay/tac` keeps posts starting with an optional `Chapter ` prefix and a
+chapter number, so polls, art posts, and announcements are dropped. Pawchive
+enforces 50-result API pages, so the builder requests only the first page for
+each creator. It loads the published RSS first, renders only absent posts whose
+publication time is newer than the newest retained item, merges them by
+permalink, and trims the oldest items only after merging. It does not crawl
+listing HTML or fetch individual post pages.
 
 ### Post Arrival Schedule & Patreon Sync
 
@@ -75,6 +77,7 @@ Output:
 
 - `public/cerim/hdt/feed.xml`
 - `public/void/thr/feed.xml`
+- `public/onedayokay/tac/feed.xml`
 
 ## Configuration
 

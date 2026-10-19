@@ -58,6 +58,15 @@ FEEDS = [
         "author": "Void Herald",
         "title_filter": r"^the hundred reigns \d+:",
     },
+    {
+        "key": "onedayokay/tac",
+        "creator_id": "207666427",
+        "campaign_id": "15752705",
+        "fallback_name": "onedayokay",
+        "title": "The Archmage Coefficient",
+        "author": "onedayokay",
+        "title_filter": r"^(?:chapter\s+)?\d+\s+-",
+    },
 ]
 
 ITEM_LIMIT = max(1, int(os.environ.get("PAWCHIVE_MAX_ITEMS", "30")))
