@@ -54,4 +54,4 @@ Changing a builder's `FEEDS` list requires updating, in the same change:
 
 ## CI
 
-`.github/workflows/build-feeds.yml` runs on a daily schedule, on `workflow_dispatch`, and on pushes to `main` touching the builders/requirements/workflow; it builds both feeds with `*_SITE_BASE_URL` set to the Pages URL and deploys `public/` to GitHub Pages. A separate keepalive workflow commits if the repo is idle 45+ days.
+`.github/workflows/build-feeds.yml` runs every six hours, on `workflow_dispatch`, and on pushes to `main` touching the builders/requirements/workflow; it builds both feeds with `*_SITE_BASE_URL` set to the Pages URL and deploys `public/` to GitHub Pages. A separate keepalive workflow commits if the repo is idle 45+ days.
