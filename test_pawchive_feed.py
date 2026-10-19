@@ -30,17 +30,17 @@ class PawchiveFeedTests(unittest.TestCase):
 
     def test_feed_defs_unique(self):
         # Verify feed configurations contain unique keys and creator IDs.
-        self.assertEqual(3, len(feed.FEEDS))
+        self.assertEqual(4, len(feed.FEEDS))
         self.assertEqual(
-            {"cerim/hdt", "void/thr", "onedayokay/tac"},
+            {"cerim/hdt", "void/thr", "onedayokay/tac", "meister7slop"},
             {item["key"] for item in feed.FEEDS},
         )
-        self.assertEqual(3, len({item["key"] for item in feed.FEEDS}))
-        self.assertEqual(3, len({item["creator_id"] for item in feed.FEEDS}))
-        self.assertEqual(3, len({item["campaign_id"] for item in feed.FEEDS}))
-        self.assertEqual(3, len({item["title"] for item in feed.FEEDS}))
-        self.assertEqual(3, len({item["author"] for item in feed.FEEDS}))
-        self.assertEqual(3, len({item["title_filter"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["key"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["creator_id"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["campaign_id"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["title"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["author"] for item in feed.FEEDS}))
+        self.assertEqual(4, len({item["title_filter"] for item in feed.FEEDS}))
 
     def test_feed_title_format(self):
         # Verify feed title follows 'novel title - Author' format.
@@ -239,6 +239,23 @@ class PawchiveFeedTests(unittest.TestCase):
         dropped = [
             "Update",
             "End of Month Poll",
+        ]
+
+        for title in kept:
+            self.assertTrue(feed.matches_title_filter(title, matcher), title)
+        for title in dropped:
+            self.assertFalse(feed.matches_title_filter(title, matcher), title)
+
+    def test_mistervii_title_filter(self):
+        # Verify SB chapter posts match while non-chapter posts drop.
+        matcher = feed.title_filter_for(feed.FEEDS[3])
+        kept = [
+            "SB: Chapter 261 - My Father And His Toys",
+            "SB: Chapter 256 - Interlude 34",
+        ]
+        dropped = [
+            "Update",
+            "The Strongest Spellblade - Announcement",
         ]
 
         for title in kept:

@@ -67,6 +67,15 @@ FEEDS = [
         "author": "onedayokay",
         "title_filter": r"^(?:chapter\s+)?\d+\s+-",
     },
+    {
+        "key": "meister7slop",
+        "creator_id": "64285829",
+        "campaign_id": "7699393",
+        "fallback_name": "MisterVii",
+        "title": "The Strongest Spellblade",
+        "author": "MisterVii",
+        "title_filter": r"^sb:\s*chapter\s+\d+",
+    },
 ]
 
 ITEM_LIMIT = max(1, int(os.environ.get("PAWCHIVE_MAX_ITEMS", "30")))
