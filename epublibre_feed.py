@@ -55,6 +55,7 @@ import rss_common as rss
 BASE = "https://www.epublibre.org"
 LANGUAGE_ID = "5"  # inglés
 PAGE_SIZE = 18
+RENDER_VERSION = "2"  # bump to force re-rendering of retained items
 
 FEEDS: list[dict[str, str]] = [
     {
@@ -337,6 +338,11 @@ def load_existing(session: requests.Session, feed: dict) -> dict[str, dict]:
         except ET.ParseError:
             continue
 
+        # Feeds rendered by an older template are ignored so items rebuild.
+        description = root.findtext("./channel/description") or ""
+        if f"render v{RENDER_VERSION}" not in description:
+            continue
+
         for item in root.findall("./channel/item"):
             link = (item.findtext("link") or "").strip()
             body = item.findtext(f"{{{rss.CONTENT_NS}}}encoded") or ""
@@ -406,7 +412,7 @@ def build_feed_xml(feed: dict, items: list[dict]) -> str:
         link=f"{BASE}/catalogo/index/0/nuevo/todos/sin/{LANGUAGE_ID}",
         description=(
             "Newest English-language books added to ePubLibre, "
-            "with synopsis and magnet link. Unofficial."
+            f"with synopsis and magnet link. Unofficial. (render v{RENDER_VERSION})"
         ),
         item_xml=(render_item(item) for item in items),
         self_url=self_url,
