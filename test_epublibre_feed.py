@@ -103,6 +103,29 @@ class EpubLibreFeedTests(unittest.TestCase):
         self.assertEqual(["Novela", "Ciencia ficción"], detail["genres"])
         self.assertTrue(detail["magnet"].startswith("magnet:?xt=urn:btih:"))
 
+    def test_parse_detail_dedupes_authors(self):
+        # Verify repeated author rows produce one name.
+        document = DETAIL_HTML.replace(
+            "</table>",
+            '<tr><td class="celda-rotulo"><div class="label">Escritor</div></td>'
+            '<td><a href="https://www.epublibre.org/autor/index/34">'
+            "Philip K. Dick</a></td></tr></table>",
+            1,
+        )
+        book = {
+            "id": "85251",
+            "link": feed.detail_url("85251"),
+            "title": "x",
+            "author": "x",
+            "cover": "",
+            "pages": "",
+            "revision": "",
+        }
+
+        detail = feed.parse_detail(document, book)
+
+        self.assertEqual("Philip K. Dick", detail["author"])
+
     def test_item_body_includes_magnet(self):
         # Verify rendered body carries magnet link, cover, and escaped synopsis.
         book = {

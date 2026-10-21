@@ -209,11 +209,15 @@ def parse_detail(document: str, book: dict) -> dict:
         if role in {"escritor", "escritora", "autor", "autora"}:
             writers.extend(_text(a) for a in row.select("a[href*='/autor/index/']"))
 
+    writers = list(dict.fromkeys(name for name in writers if name))
+    fallback = [
+        _text(a) for a in detail.select("a[href*='/autor/index/']")
+    ]
+    fallback = list(dict.fromkeys(name for name in fallback if name))
+
     return {
         "title": _text(soup.select_one("div.titulo")) or book["title"],
-        "author": ", ".join(writers)
-        or ", ".join(_text(a) for a in detail.select("a[href*='/autor/index/']"))
-        or book["author"],
+        "author": ", ".join(writers) or ", ".join(fallback) or book["author"],
         "cover": (cover.get("src", "") if cover is not None else "")
         or book["cover"],
         "synopsis": _plain_text(synopsis) if synopsis is not None else "",
