@@ -130,6 +130,45 @@ Royal Road configuration:
 | `ROYALROAD_OUT_DIR` | `public` | Generated output directory |
 | `ROYALROAD_SITE_BASE_URL` | unset | Deployed site root used for self-links and body reuse |
 
+## ePubLibre English additions
+
+`epublibre_feed.py` tracks the English-language branch of the ePubLibre
+catalogue (language id `5`) and publishes the newest books as one feed:
+
+| Feed | Content | GitHub Pages |
+|------|---------|--------------|
+| `epublibre/en` | English-language books added to ePubLibre | [feed.xml](https://jumpingpony.github.io/misc_feed/epublibre/en/feed.xml) |
+
+Discovery uses the catalogue's AJAX endpoint
+(`/catalogo/index/{offset}/nuevo/todos/sin/5/--/ajax`), which returns 18
+newest-first tiles per page. Each new book costs one detail-page request that
+supplies the date added (`En la web desde`), synopsis, collections, genres,
+and the magnet link. Items carry the cover, metadata, synopsis, and download
+link in `content:encoded`.
+
+The feed keeps at most 100 books, and only books added in the last 28 days;
+older entries are dropped on the next build. Existing items are loaded from
+the local feed and the deployed copy before discovery, and a published id
+ends the walk because the listing is newest-first. A steady-state build costs
+one catalogue request. Requests are spaced 7 seconds apart.
+
+ePubLibre answers throttled requests with an empty `200` body. The builder
+treats a page without the metadata table as a failure, retries after
+`EPUBLIBRE_BLOCK_DELAY`, and aborts the build rather than publish an entry
+with a guessed date or missing magnet.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `EPUBLIBRE_MAX_ITEMS` | `100` | Maximum retained items in the feed |
+| `EPUBLIBRE_FEED_DAYS` | `28` | Only keep books added within this many days |
+| `EPUBLIBRE_BACKFILL_PAGES` | `6` | Catalogue pages scanned on a cold start |
+| `EPUBLIBRE_TIMEOUT` | `30` | HTTP timeout in seconds |
+| `EPUBLIBRE_RETRIES` | `2` | Retries after the initial request |
+| `EPUBLIBRE_REQUEST_DELAY` | `7` | Seconds between requests |
+| `EPUBLIBRE_BLOCK_DELAY` | `300` | Seconds to wait after an empty (throttled) page |
+| `EPUBLIBRE_OUT_DIR` | `public` | Generated output directory |
+| `EPUBLIBRE_SITE_BASE_URL` | unset | Deployed site root used for RSS self-links |
+
 ## Caveats
 
 - The project is unofficial and unaffiliated with Pawchive or Patreon.

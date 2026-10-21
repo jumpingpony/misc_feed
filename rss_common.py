@@ -327,8 +327,14 @@ def merge_new_items(
     limit: int,
     guid: Callable[[C], str | None] | None = None,
     existing_guids: set[str] | None = None,
+    require_newer: bool = True,
 ) -> tuple[dict[str, tuple[dt.datetime, T]], int, int]:
-    """Merge fresh candidates into retained items with dedup and eviction."""
+    """Merge fresh candidates into retained items with dedup and eviction.
+
+    ``require_newer`` drops candidates that are not strictly newer than the
+    newest retained item. Sources that expose only a date (not a timestamp)
+    pass False so same-day additions are not lost; identity still dedups.
+    """
     merged = dict(existing)
     newest_existing = max((date for date, _ in existing.values()), default=None)
     known_guids = set(existing_guids or ())
@@ -345,7 +351,7 @@ def merge_new_items(
             continue
 
         when = published(candidate)
-        if newest_existing is not None and when <= newest_existing:
+        if require_newer and newest_existing is not None and when <= newest_existing:
             continue
 
         merged[key] = (when, load(candidate))

@@ -16,7 +16,12 @@ class OPMLValidationTests(unittest.TestCase):
 
     def test_opml_files_exist(self) -> None:
         """Ensure all required OPML files are present in the directory."""
-        expected_files = {"all.opml", "pawchive.opml", "royalroad.opml"}
+        expected_files = {
+            "all.opml",
+            "epublibre.opml",
+            "pawchive.opml",
+            "royalroad.opml",
+        }
         actual_files = {p.name for p in OPML_DIR.glob("*.opml")}
 
         # Check required files exist

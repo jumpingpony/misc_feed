@@ -10,6 +10,7 @@ on:
     paths:
       - pawchive_feed.py
       - royalroad_feed.py
+      - epublibre_feed.py
       - rss_common.py
       - requirements.txt
       - .github/workflows/build-feeds.yml
@@ -45,6 +46,11 @@ jobs:
         env:
           ROYALROAD_SITE_BASE_URL: "${{ steps.pages.outputs.base_url }}"
         run: python royalroad_feed.py
+      - name: Build ePubLibre feed
+        continue-on-error: true
+        env:
+          EPUBLIBRE_SITE_BASE_URL: "${{ steps.pages.outputs.base_url }}"
+        run: python epublibre_feed.py
       - uses: actions/upload-pages-artifact@v5
         with:
           path: public

@@ -10,5 +10,8 @@
       <outline type="rss" text="The Archmage Coefficient - onedayokay" title="The Archmage Coefficient - onedayokay" xmlUrl="https://jumpingpony.github.io/misc_feed/onedayokay/tac/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/207666427"/>
       <outline type="rss" text="The Strongest Spellblade - MisterVii" title="The Strongest Spellblade - MisterVii" xmlUrl="https://jumpingpony.github.io/misc_feed/meister7slop/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/64285829"/>
     </outline>
+    <outline text="ePubLibre English" title="ePubLibre English">
+      <outline type="rss" text="ePubLibre - new English books" title="ePubLibre - new English books" xmlUrl="https://jumpingpony.github.io/misc_feed/epublibre/en/feed.xml" htmlUrl="https://www.epublibre.org/catalogo/index/1/nuevo/todos/sin/5"/>
+    </outline>
   </body>
 </opml>
