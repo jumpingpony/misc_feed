@@ -152,10 +152,11 @@ the local feed and the deployed copy before discovery, and a published id
 ends the walk because the listing is newest-first. A steady-state build costs
 one catalogue request. Requests are spaced 7 seconds apart.
 
-ePubLibre answers throttled requests with an empty `200` body. The builder
-treats a page without the metadata table as a failure, retries after
-`EPUBLIBRE_BLOCK_DELAY`, and aborts the build rather than publish an entry
-with a guessed date or missing magnet.
+Some catalogue entries (provisional or restricted books) answer with an
+empty `200` body; the builder skips those entries. Three blank detail pages
+in a row are treated as throttling and abort the build, so a blocked run
+never publishes a partial feed. A failed catalogue request is retried after
+`EPUBLIBRE_BLOCK_DELAY`.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
@@ -165,7 +166,7 @@ with a guessed date or missing magnet.
 | `EPUBLIBRE_TIMEOUT` | `30` | HTTP timeout in seconds |
 | `EPUBLIBRE_RETRIES` | `2` | Retries after the initial request |
 | `EPUBLIBRE_REQUEST_DELAY` | `7` | Seconds between requests |
-| `EPUBLIBRE_BLOCK_DELAY` | `300` | Seconds to wait after an empty (throttled) page |
+| `EPUBLIBRE_BLOCK_DELAY` | `300` | Pause before retrying a failed catalogue request |
 | `EPUBLIBRE_OUT_DIR` | `public` | Generated output directory |
 | `EPUBLIBRE_SITE_BASE_URL` | unset | Deployed site root used for RSS self-links |
 

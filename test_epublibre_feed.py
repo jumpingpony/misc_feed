@@ -237,14 +237,42 @@ class EpubLibreFeedTests(unittest.TestCase):
             titles = [item.findtext("title") for item in root.findall("./channel/item")]
             self.assertEqual(["New - Author"], titles)
 
-    def test_fetch_book_rejects_blank_page(self):
-        # Verify a throttled empty 200 is retried and then surfaced as an error.
+    def test_fetch_book_skips_blank_page(self):
+        # Verify a restricted/empty 200 detail page yields None, not a bad book.
         response = Mock(content=b"\n\n", text="\n\n")
-        with patch.object(feed.rss, "fetch", Mock(return_value=response)), patch.object(
-            feed.time, "sleep", Mock()
+        with patch.object(feed.rss, "fetch", Mock(return_value=response)):
+            book = feed.fetch_book(Mock(), {"link": feed.detail_url("1")})
+
+        self.assertIsNone(book)
+
+    def test_collect_skips_single_blank_page(self):
+        # Verify one restricted book is skipped while the rest are collected.
+        listing = [{"link": feed.detail_url(str(i))} for i in range(3)]
+        recent = dt.datetime.now(feed.rss.UTC)
+
+        def fake_book(session, book):
+            if book["link"].endswith("/1"):
+                return None
+            return {**book, "date": recent}
+
+        with patch.object(feed, "fetch_listing", Mock(return_value=listing)), patch.object(
+            feed, "fetch_book", side_effect=fake_book
+        ):
+            fresh = feed.collect_new(Mock(), {})
+
+        self.assertEqual(
+            [feed.detail_url("0"), feed.detail_url("2")],
+            [book["link"] for book in fresh],
+        )
+
+    def test_collect_aborts_on_blank_run(self):
+        # Verify three blank pages in a row are treated as throttling.
+        listing = [{"link": feed.detail_url(str(i))} for i in range(3)]
+        with patch.object(feed, "fetch_listing", Mock(return_value=listing)), patch.object(
+            feed, "fetch_book", Mock(return_value=None)
         ):
             with self.assertRaises(RuntimeError):
-                feed.fetch_book(Mock(), {"link": feed.detail_url("1")})
+                feed.collect_new(Mock(), {})
 
     def test_collect_rejects_empty_catalogue(self):
         # Verify an empty first page never wipes an existing feed.

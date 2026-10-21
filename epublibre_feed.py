@@ -167,30 +167,22 @@ def parse_listing(document: str) -> list[dict]:
     return books
 
 
-def fetch_book(session: requests.Session, book: dict) -> dict:
+def fetch_book(session: requests.Session, book: dict) -> dict | None:
     """Fetch one detail page and merge its fields into the listing entry.
 
-    ePubLibre answers throttled or flagged requests with an empty 200, so a
-    page without the metadata table is retried with a longer back-off instead
-    of being accepted as an empty book.
+    Some catalogue entries (provisional or restricted books) answer with an
+    empty 200 body.  Those return None so the caller can skip them; network
+    failures still raise.
     """
-    last_error = "empty detail page"
+    pause()
+    response = rss.fetch(session, book["link"], timeout=TIMEOUT, retries=RETRIES)
+    assert response is not None
 
-    for attempt in range(RETRIES + 1):
-        pause()
-        try:
-            response = rss.fetch(session, book["link"], timeout=TIMEOUT, retries=RETRIES)
-            assert response is not None
-            if len(response.content) < 1024 or "En la web desde" not in response.text:
-                raise ValueError("empty detail page")
-            return {**book, **parse_detail(response.text, book)}
-        except (RuntimeError, ValueError) as exc:
-            last_error = str(exc)
-            # A blank 200 means the site throttled us; give it a long pause.
-            if attempt < RETRIES:
-                time.sleep(BLOCK_DELAY)
+    if len(response.content) < 1024 or "En la web desde" not in response.text:
+        print(f"  skip empty detail page: {book['link']}")
+        return None
 
-    raise RuntimeError(f"failed to fetch {book['link']}: {last_error}")
+    return {**book, **parse_detail(response.text, book)}
 
 
 def parse_detail(document: str, book: dict) -> dict:
@@ -366,6 +358,7 @@ def collect_new(session: requests.Session, existing: dict[str, dict]) -> list[di
     """
     start = cutoff()
     fresh: list[dict] = []
+    blanks = 0
 
     for page in range(BACKFILL_PAGES):
         listing = fetch_listing(session, page * PAGE_SIZE)
@@ -379,6 +372,14 @@ def collect_new(session: requests.Session, existing: dict[str, dict]) -> list[di
                 return fresh
 
             detail = fetch_book(session, book)
+            if detail is None:
+                # A run of blank pages means throttling, not a bad entry.
+                blanks += 1
+                if blanks >= 3:
+                    raise RuntimeError("detail pages are empty; site is throttling")
+                continue
+
+            blanks = 0
             if detail["date"] < start:
                 return fresh
 
