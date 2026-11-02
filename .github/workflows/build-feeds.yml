@@ -24,6 +24,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  issues: write
 
 jobs:
   watch:
@@ -68,6 +69,7 @@ jobs:
         id: pages
         uses: actions/configure-pages@v6
       - name: Build feeds
+        id: feeds
         env:
           PAWCHIVE_SITE_BASE_URL: "${{ steps.pages.outputs.base_url }}"
           PAWCHIVE_SESSION: "${{ secrets.PAWCHIVE_SESSION }}"
@@ -91,3 +93,26 @@ jobs:
       - uses: actions/deploy-pages@v5
         env:
           NODE_OPTIONS: --no-deprecation
+      # The feed falls back to Pawchive when the cookie dies, so surface the
+      # failure as an issue instead of leaving a green run that looks healthy.
+      - name: Report rejected Patreon cookie
+        if: steps.feeds.outputs.patreon_auth == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing=$(gh issue list --state open --search '"Patreon cookie" in:title' --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "Patreon cookie issue #$existing is already open"
+            exit 0
+          fi
+          gh issue create \
+            --title "Patreon cookie expired or missing" \
+            --body "The feed build could not authenticate with Patreon, so chapters are falling back to Pawchive (about three hours late). Set the \`PATREON_COOKIE\` secret to the \`session_id\` value from a logged-in Patreon browser session."
+      - name: Close resolved Patreon cookie issue
+        if: steps.feeds.outputs.patreon_auth == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for number in $(gh issue list --state open --search '"Patreon cookie" in:title' --json number --jq '.[].number'); do
+            gh issue close "$number" --comment "PATREON_COOKIE authenticated again; direct publishing restored."
+          done

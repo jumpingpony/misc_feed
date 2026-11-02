@@ -170,6 +170,16 @@ def check_patreon_auth(session: requests.Session) -> bool:
     return False
 
 
+def write_github_output(name: str, value: str) -> None:
+    """Expose a value to later workflow steps when running inside Actions."""
+    path = os.environ.get("GITHUB_OUTPUT")
+    if not path:
+        return
+
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"{name}={value}\n")
+
+
 class ChapterSanitizer(HTMLParser):
     """HTML parser that strips dangerous tags, sanitizes attributes, and escapes unknown tags.
 
@@ -1399,13 +1409,16 @@ def main(argv: list[str] | None = None) -> int:
     # Establish the direct Patreon source once for every configured feed.
     patreon_session = None
     if not PATREON_COOKIE:
+        write_github_output("patreon_auth", "false")
         print("[patreon] PATREON_COOKIE not set; using Pawchive/cum.st only")
     else:
         candidate = make_patreon_session()
         if check_patreon_auth(candidate):
             patreon_session = candidate
+            write_github_output("patreon_auth", "true")
             print("[patreon] authenticated; chapters publish straight from Patreon")
         else:
+            write_github_output("patreon_auth", "false")
             print(
                 "::warning title=Patreon cookie rejected::"
                 "PATREON_COOKIE is expired or revoked; falling back to Pawchive/cum.st. "

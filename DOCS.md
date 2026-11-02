@@ -64,14 +64,18 @@ Create the repository secret once:
 gh secret set PATREON_COOKIE
 ```
 
-Paste the full `Cookie` request header from a logged-in Patreon session
-(DevTools → Network → XHR → a `posts` request → Request Headers → Cookie).
-A bare `session_id` value also works. The workflow passes the secret only to
-the feed-build step; the watcher never receives it.
+Paste the **`session_id` value** (not `__cf_bm`, not the whole cookie header):
+DevTools → Application → Cookies → `https://www.patreon.com` → `session_id`.
+A full `Cookie` header also works. The workflow passes the secret only to the
+feed-build step; the watcher never receives it.
 
-When Patreon rejects the cookie, the build prints a `Patreon cookie rejected`
-warning annotation and falls back to cum.st/Pawchive. Refresh the secret after
-signing out of Patreon, changing the password, or when that warning appears.
+Patreon issues `session_id` with a **one-year expiry** and does not rotate it
+on API calls, so normal builds do not invalidate it. It dies early only when
+the account signs out of Patreon, changes the password, or revokes the session.
+When Patreon rejects it, the build opens a **"Patreon cookie expired or
+missing"** issue, keeps deploying from Pawchive/cum.st, and closes the issue
+automatically once a refreshed secret authenticates again. That is one manual
+update per year, not per chapter.
 
 During each build run, `pawchive_feed.py` also checks Patreon's public API for
 newly published posts. If a newer post exists on Patreon that Pawchive has not
