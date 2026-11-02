@@ -13,12 +13,16 @@ RSS rendering, merge/eviction, feed writing, and pruning) lives in
 | Feed | Novel | Creator / Author | GitHub Pages |
 |------|-------|------------------|--------------|
 | cerim/hdt | Hell Difficulty Tutorial | Patreon `31891971` (Cerim) | [feed.xml](https://jumpingpony.github.io/misc_feed/cerim/hdt/feed.xml) |
+| voidherald/hr | The Hundred Reigns | Patreon `16493499` (Void Herald) | [feed.xml](https://jumpingpony.github.io/misc_feed/voidherald/hr/feed.xml) |
+| mistervii/all | Collected Serials | Patreon `64285829` (MisterVii) | [feed.xml](https://jumpingpony.github.io/misc_feed/mistervii/all/feed.xml) |
 
 Chapter bodies come from Patreon's web API first. A patron session cookie
 (`PATREON_COOKIE`) authenticates the account, and every post the account can
 read in full is rendered as soon as Patreon publishes it. cum.st and Pawchive
 remain fallbacks: a post the direct source cannot serve is taken from cum.st,
-then from Pawchive, and a slower archive never replaces a direct body.
+then from Pawchive, and a slower archive never replaces a direct body. Feeds
+marked `"patreon_direct": False` skip the authenticated source and read only
+cum.st/Pawchive; `voidherald/hr` and `mistervii/all` use that path.
 
 Patreon publishes a post roughly three hours before Pawchive's archive ingests
 it, so the direct source is what keeps the feed current. Chapter extraction
@@ -28,12 +32,21 @@ their links, and separators remain part of the chapter. The remaining chapter
 HTML is stored in each item's `<content:encoded>` element.
 
 Each feed retains the 30 newest chapter posts. A per-feed title pattern decides
-what counts as a chapter: `cerim/hdt` keeps titles containing "chapter", so
-polls, art posts, and announcements are dropped. Pawchive enforces 50-result API
-pages, so the builder requests only the first page for each creator. It loads the
-published RSS first, renders only absent posts whose publication time is newer than the
-newest retained item, merges them by canonical Patreon post ID, and trims the oldest items only
-after merging. It does not crawl listing HTML or fetch individual post pages.
+what counts as a chapter:
+
+- `cerim/hdt` keeps titles containing "chapter", so polls, art posts, and
+  announcements are dropped.
+- `voidherald/hr` keeps numbered titles like `The Hundred Reigns 286: ...`, so
+  HR art galleries and polls are dropped even though they carry the series name.
+- `mistervii/all` keeps titles containing "chapter" across The Strongest
+  Spellblade, Foxy Blight, and The Systemic Lands; one feed covers all three
+  series.
+
+Pawchive enforces 50-result API pages, so the builder requests only the first
+page for each creator. It loads the published RSS first, renders only absent
+posts whose publication time is newer than the newest retained item, merges them
+by canonical Patreon post ID, and trims the oldest items only after merging. It
+does not crawl listing HTML or fetch individual post pages.
 
 ### Post arrival schedule and release watch
 
@@ -56,6 +69,10 @@ GitHub's scheduler does not fire on time: scheduled runs are routinely delayed
 
 The build job then rebuilds and deploys, normally within five minutes of
 publication. The watcher reads only public metadata and needs no credential.
+It only polls feeds marked `"watch": True`, which currently means `cerim/hdt`
+alone: `voidherald/hr` publishes Monday–Friday at 14:30 UTC and
+`mistervii/all` around 23:00–23:30 UTC, so both are covered by the six-hourly
+builds.
 
 Daylight saving is handled explicitly: the window is defined in Europe/Berlin
 and converted with the EU rules (summer time starts the last Sunday of March at

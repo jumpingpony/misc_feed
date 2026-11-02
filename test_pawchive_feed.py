@@ -31,14 +31,16 @@ class PawchiveFeedTests(unittest.TestCase):
 
     def test_feed_defs_unique(self):
         # Verify feed configurations contain unique keys and creator IDs.
-        self.assertEqual(1, len(feed.FEEDS))
-        self.assertEqual({"cerim/hdt"}, {item["key"] for item in feed.FEEDS})
-        self.assertEqual(1, len({item["key"] for item in feed.FEEDS}))
-        self.assertEqual(1, len({item["creator_id"] for item in feed.FEEDS}))
-        self.assertEqual(1, len({item["campaign_id"] for item in feed.FEEDS}))
-        self.assertEqual(1, len({item["title"] for item in feed.FEEDS}))
-        self.assertEqual(1, len({item["author"] for item in feed.FEEDS}))
-        self.assertEqual(1, len({item["title_filter"] for item in feed.FEEDS}))
+        self.assertEqual(3, len(feed.FEEDS))
+        self.assertEqual(
+            {"cerim/hdt", "voidherald/hr", "mistervii/all"},
+            {item["key"] for item in feed.FEEDS},
+        )
+        self.assertEqual(3, len({item["key"] for item in feed.FEEDS}))
+        self.assertEqual(3, len({item["creator_id"] for item in feed.FEEDS}))
+        self.assertEqual(3, len({item["campaign_id"] for item in feed.FEEDS}))
+        self.assertEqual(3, len({item["title"] for item in feed.FEEDS}))
+        self.assertEqual(3, len({item["author"] for item in feed.FEEDS}))
 
     def test_feed_title_format(self):
         # Verify feed title follows 'novel title - Author' format.
@@ -692,6 +694,34 @@ class PawchiveFeedTests(unittest.TestCase):
 
         self.assertIn(f"<link>{expected_url}</link>", rendered)
         self.assertIn(f'<guid isPermaLink="true">{expected_url}</guid>', rendered)
+
+    def test_archive_only_feed_skips_direct_source(self):
+        # Verify a feed marked archive-only never receives the Patreon session.
+        feed_config = {
+            "key": "voidherald/hundred-reigns",
+            "creator_id": "1",
+            "campaign_id": "2",
+            "fallback_name": "Author",
+            "title": "Novel",
+            "author": "Author",
+            "title_filter": "chapter",
+            "patreon_direct": False,
+        }
+        direct_session = Mock()
+
+        with patch.object(feed, "load_existing", return_value={}), patch.object(
+            feed, "collect_posts", return_value=[]
+        ) as mock_collect, patch.object(feed, "write_feed"), patch.object(
+            feed, "build_feed_xml", return_value="<rss/>"
+        ):
+            feed.run_feed(
+                Mock(),
+                feed_config,
+                sync_mode=feed.SyncMode.SKIP_PATREON,
+                patreon_session=direct_session,
+            )
+
+        self.assertIsNone(mock_collect.call_args.kwargs["patreon_session"])
 
     def test_cumst_first_then_pawchive_dedup(self):
         # Verify post first imported from cum.st is not duplicated when later seen on Pawchive.

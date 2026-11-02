@@ -49,6 +49,16 @@ class PatreonWatchTests(unittest.TestCase):
         self.assertEqual({0, 1, 2, 3, 6}, watch.parse_release_days(""))
         self.assertEqual({6}, watch.parse_release_days("6"))
 
+    def test_watched_feeds_only_cerim(self):
+        # The window is tuned to Cerim; the two archive feeds must not opt in.
+        self.assertEqual(["cerim/hdt"], [item["key"] for item in watch.watched_feeds()])
+
+    def test_watched_feeds_filters_by_flag(self):
+        # Only feeds that opt in are polled inside the release window.
+        feeds = [{"key": "a", "watch": True}, {"key": "b"}]
+        with patch.object(watch, "FEEDS", feeds):
+            self.assertEqual([{"key": "a", "watch": True}], watch.watched_feeds())
+
     def test_has_new_chapter_when_id_missing(self):
         # A chapter absent from the published feed triggers a build.
         chapter = {

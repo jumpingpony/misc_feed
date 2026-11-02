@@ -6,6 +6,8 @@
   <body>
     <outline text="Pawchive Patreon" title="Pawchive Patreon">
       <outline type="rss" text="Hell Difficulty Tutorial - Cerim" title="Hell Difficulty Tutorial - Cerim" xmlUrl="https://jumpingpony.github.io/misc_feed/cerim/hdt/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/31891971"/>
+      <outline type="rss" text="The Hundred Reigns - Void Herald" title="The Hundred Reigns - Void Herald" xmlUrl="https://jumpingpony.github.io/misc_feed/voidherald/hr/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/16493499"/>
+      <outline type="rss" text="Collected Serials - MisterVii" title="Collected Serials - MisterVii" xmlUrl="https://jumpingpony.github.io/misc_feed/mistervii/all/feed.xml" htmlUrl="https://pawchive.pw/patreon/user/64285829"/>
     </outline>
   </body>
 </opml>

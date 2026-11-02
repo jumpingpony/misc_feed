@@ -59,6 +59,30 @@ FEEDS = [
         "title": "Hell Difficulty Tutorial",
         "author": "Cerim",
         "title_filter": "chapter",
+        # The release watcher runs on Cerim's schedule only.
+        "watch": True,
+    },
+    {
+        "key": "voidherald/hr",
+        "creator_id": "16493499",
+        "campaign_id": "2369856",
+        "fallback_name": "VoidHerald",
+        "title": "The Hundred Reigns",
+        "author": "Void Herald",
+        # Numbered chapter titles only; drops art galleries and polls.
+        "title_filter": r"^the\s+hundred\s+reigns\s+\d+\b",
+        "patreon_direct": False,
+    },
+    {
+        "key": "mistervii/all",
+        "creator_id": "64285829",
+        "campaign_id": "7699393",
+        "fallback_name": "mistervii",
+        "title": "Collected Serials",
+        "author": "MisterVii",
+        # One feed across Spellblade, Foxy Blight and Systemic Lands.
+        "title_filter": "chapter",
+        "patreon_direct": False,
     },
 ]
 
@@ -1278,6 +1302,9 @@ def run_feed(
     name = feed["fallback_name"]
     print(f"[{feed['key']}] {feed_title(feed) or name}")
 
+    # Feeds marked as archive-only skip the patron-authenticated source.
+    direct_session = patreon_session if feed.get("patreon_direct", True) else None
+
     # Load existing historical items and fetch latest creator posts from all sources.
     existing = load_existing(session, feed)
     posts = collect_posts(
@@ -1285,7 +1312,7 @@ def run_feed(
         feed["creator_id"],
         feed.get("campaign_id"),
         title_filter=title_filter_for(feed),
-        patreon_session=patreon_session,
+        patreon_session=direct_session,
     )
 
     # Merge new posts into historical collection and write feed artifacts.

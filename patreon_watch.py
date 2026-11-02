@@ -111,6 +111,11 @@ def parse_release_days(raw: str) -> set[int]:
     return days or {0, 1, 2, 3, 6}
 
 
+def watched_feeds() -> list[dict]:
+    """Feeds whose release window this watcher monitors."""
+    return [feed for feed in FEEDS if feed.get("watch", False)]
+
+
 def newest_chapter(session, feed: dict) -> dict | None:
     """Return the newest published post whose title matches the feed pattern."""
     campaign_id = feed.get("campaign_id")
@@ -213,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     session = rss.make_session(accept=rss.AcceptFormat.JSON)
 
     while True:
-        for feed in FEEDS:
+        for feed in watched_feeds():
             if has_new_chapter(session, feed):
                 print("[watch] chapter found; stopping polls")
                 set_output("found", "true")
