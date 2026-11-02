@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Build full-text RSS feeds for selected Pawchive Patreon creators.
 
-Post discovery and post bodies come from Pawchive's documented v1 API.  Chapter
-HTML is read from the same API field used by WebToEpub's PawchiveParser. Explicit
-previous/next navigation and attachments are omitted; author notes remain. Only
-posts whose titles match the feed's title pattern are published.
+Post bodies come from Patreon's web API when a patron session cookie is
+configured, so chapters appear within minutes of publication instead of
+waiting for Pawchive's archive.  cum.st and Pawchive remain fallbacks for
+posts the direct source cannot serve.  Chapter HTML is sanitized with the same
+tag allowlist used for Pawchive bodies.  Explicit previous/next navigation and
+attachments are omitted; author notes remain.  Only posts whose titles match
+the feed's title pattern are published.
 
 Output: public/<feed-key>/feed.xml and public/<feed-key>/index.html.  Shared
 plumbing lives in rss_common.py; this builder keeps source-specific logic.
@@ -17,9 +20,11 @@ from enum import Enum, auto
 import html
 from html.parser import HTMLParser
 from http import HTTPStatus
+import json
 import os
 from pathlib import Path
 import re
+from urllib.parse import urlencode
 
 import requests
 
@@ -38,6 +43,12 @@ DEFAULT_SESSION_COOKIE = (
     "aocWXA.DPjQUj10mUuEqXX3zexPW9HZvlI"
 )
 SESSION_COOKIE = (os.environ.get("PAWCHIVE_SESSION") or DEFAULT_SESSION_COOKIE).strip()
+
+# Patreon session cookie from the patron account that owns the subscription.
+# The workflow passes it as the PATREON_COOKIE secret, never as a file or flag.
+PATREON_COOKIE = os.environ.get("PATREON_COOKIE", "").strip()
+PATREON_API_VERSION = "1.0"
+PATREON_USER_URL = f"{PATREON_API_BASE}/current_user?json-api-version={PATREON_API_VERSION}"
 
 FEEDS = [
     {
@@ -103,6 +114,60 @@ def make_session(cookie: str | None = None) -> requests.Session:
         cookie_domain="pawchive.pw",
         accept=rss.AcceptFormat.JSON,
     )
+
+
+def normalize_patreon_cookie(value: str) -> str:
+    """Turn a pasted browser cookie into a Cookie header value.
+
+    Accepts a full header ("session_id=...; other=..."), a bare session id,
+    and a value that still carries the "Cookie:" prefix from DevTools.  The
+    result is stripped to printable ASCII so a bad paste can never reach the
+    HTTP layer, where the error message would echo the secret.
+    """
+    cookie = " ".join(value.split())
+    cookie = "".join(
+        char for char in cookie if 32 <= ord(char) < 127
+    ).strip()
+
+    # DevTools' "Copy value" sometimes includes the header name.
+    if cookie.lower().startswith("cookie:"):
+        cookie = cookie[len("cookie:"):].strip()
+
+    # A bare token is the session_id value itself.
+    if cookie and "=" not in cookie:
+        cookie = f"session_id={cookie}"
+
+    return cookie
+
+
+def make_patreon_session(cookie: str | None = None) -> requests.Session:
+    """Build the authenticated Patreon session used for direct chapter access."""
+    active_cookie = normalize_patreon_cookie(
+        cookie if cookie is not None else PATREON_COOKIE
+    )
+    session = rss.make_session(accept=rss.AcceptFormat.JSON)
+
+    # Patreon's web API reads the browser cookie header verbatim.
+    if active_cookie:
+        session.headers["Cookie"] = active_cookie
+        session.headers["Accept"] = "application/vnd.api+json"
+
+    return session
+
+
+def check_patreon_auth(session: requests.Session) -> bool:
+    """Return True when the session cookie still identifies a logged-in user."""
+    try:
+        response = session.get(PATREON_USER_URL, timeout=TIMEOUT)
+    except requests.RequestException as exc:
+        print(f"  [patreon] auth check failed: {exc}")
+        return False
+
+    if response.status_code == HTTPStatus.OK:
+        return True
+
+    print(f"  [patreon] auth check returned HTTP {response.status_code}")
+    return False
 
 
 class ChapterSanitizer(HTMLParser):
@@ -240,6 +305,94 @@ def build_chapter(post: dict) -> str:
     sanitizer.close()
 
     return sanitizer.get_html()
+
+
+INLINE_MARKS = {
+    "bold": "strong",
+    "italic": "em",
+    "strike": "s",
+    "underline": "u",
+    "code": "code",
+}
+
+
+def render_inline_marks(text: str, marks: list | None) -> str:
+    """Wrap escaped text in the HTML tags for Patreon's inline marks."""
+    for mark in reversed(marks or []):
+        if not isinstance(mark, dict):
+            continue
+
+        kind = mark.get("type")
+        if kind == "link":
+            href = rss.safe_url(
+                str((mark.get("attrs") or {}).get("href") or ""), PATREON_BASE
+            )
+            if href:
+                text = f'<a href="{html.escape(href, quote=True)}">{text}</a>'
+            continue
+
+        tag = INLINE_MARKS.get(str(kind))
+        if tag:
+            text = f"<{tag}>{text}</{tag}>"
+
+    return text
+
+
+def render_prosemirror_nodes(nodes: list | None, inline: bool = False) -> str:
+    """Render Patreon's ProseMirror JSON nodes to a small HTML subset."""
+    parts: list[str] = []
+
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+
+        kind = str(node.get("type") or "")
+        children = node.get("content")
+
+        if kind == "text":
+            parts.append(
+                render_inline_marks(
+                    html.escape(str(node.get("text") or "")), node.get("marks")
+                )
+            )
+        elif kind == "hard_break":
+            parts.append("<br>")
+        elif kind == "image":
+            src = (node.get("attrs") or {}).get("src")
+            if src:
+                parts.append(f'<img src="{html.escape(str(src), quote=True)}" alt="">')
+        elif kind == "paragraph":
+            parts.append(f"<p>{render_prosemirror_nodes(children, True)}</p>")
+        elif kind == "heading":
+            level = min(6, max(1, int((node.get("attrs") or {}).get("level") or 2)))
+            parts.append(f"<h{level}>{render_prosemirror_nodes(children, True)}</h{level}>")
+        elif kind in {"bullet_list", "ordered_list"}:
+            tag = "ul" if kind == "bullet_list" else "ol"
+            parts.append(f"<{tag}>{render_prosemirror_nodes(children)}</{tag}>")
+        elif kind == "list_item":
+            parts.append(f"<li>{render_prosemirror_nodes(children, True)}</li>")
+        elif kind == "blockquote":
+            parts.append(f"<blockquote>{render_prosemirror_nodes(children)}</blockquote>")
+        else:
+            parts.append(render_prosemirror_nodes(children, inline))
+
+    return "".join(parts)
+
+
+def content_json_to_html(raw: object) -> str:
+    """Render Patreon's content_json_string body to HTML, or '' when unusable."""
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+
+    try:
+        document = json.loads(raw)
+    except json.JSONDecodeError:
+        return ""
+
+    if not isinstance(document, dict):
+        return ""
+
+    return render_prosemirror_nodes([document]).strip()
 
 
 def parse_date(value: object) -> dt.datetime:
@@ -425,23 +578,116 @@ def load_existing(session: requests.Session, feed: dict) -> dict[str, tuple[dt.d
     return items
 
 
+def patreon_api_url(campaign_id: str, count: int) -> str:
+    """Build the campaign posts query used by Patreon's web client."""
+    params = {
+        "filter[campaign_id]": campaign_id,
+        "filter[contains_exclusive_posts]": "true",
+        "filter[is_draft]": "false",
+        "sort": "-published_at",
+        "page[count]": str(count),
+        "json-api-version": PATREON_API_VERSION,
+        "json-api-use-default-includes": "false",
+    }
+    return f"{PATREON_API_BASE}/posts?{urlencode(params)}"
+
+
+def fetch_patreon_posts(
+    session: requests.Session, campaign_id: str, count: int = ITEM_LIMIT
+) -> list[dict]:
+    """Fetch raw post resources from Patreon's campaign API."""
+    payload = rss.fetch_json(
+        session,
+        patreon_api_url(campaign_id, count),
+        timeout=TIMEOUT,
+        retries=RETRIES,
+    )
+    data = payload.get("data") if isinstance(payload, dict) else None
+    return [item for item in data or [] if isinstance(item, dict)]
+
+
+def patreon_post_candidate(item: dict, creator_id: str) -> dict | None:
+    """Convert one Patreon post resource into the builder's post shape.
+
+    Returns None when the account cannot view the post or the body is empty, so
+    the caller falls back to cum.st or Pawchive instead of publishing a teaser.
+    """
+    attributes = item.get("attributes") or {}
+    if not attributes.get("current_user_can_view"):
+        return None
+
+    published = attributes.get("published_at")
+    post_id = str(item.get("id") or "")
+    if not post_id or not published:
+        return None
+
+    body = str(attributes.get("content") or "").strip()
+    if not body:
+        body = content_json_to_html(attributes.get("content_json_string"))
+    if not body:
+        return None
+
+    return {
+        "id": post_id,
+        "title": str(attributes.get("title") or "Untitled"),
+        "published": parse_date(published),
+        "content": body,
+        "user": creator_id,
+        "service": "patreon",
+        "url": f"{PATREON_BASE}/posts/{post_id}",
+    }
+
+
+def collect_patreon_posts(
+    session: requests.Session,
+    campaign_id: str,
+    creator_id: str,
+    *,
+    count: int = ITEM_LIMIT,
+) -> list[dict]:
+    """Fetch chapter posts the logged-in patron account can read in full."""
+    try:
+        items = fetch_patreon_posts(session, campaign_id, count=count)
+    except (RuntimeError, requests.RequestException) as exc:
+        print(f"  [patreon] post fetch failed: {exc}")
+        return []
+
+    posts = [
+        post
+        for item in items
+        if (post := patreon_post_candidate(item, creator_id)) is not None
+    ]
+
+    if items and not posts:
+        print(
+            f"  [patreon] {len(items)} post(s) visible but none readable in full; "
+            "check the subscription tier"
+        )
+
+    return posts
+
+
 def collect_posts(
     session: requests.Session,
     creator_id: str,
     campaign_id: str | None = None,
     *,
     title_filter: re.Pattern[str],
+    patreon_session: requests.Session | None = None,
 ) -> list[dict]:
-    """Fetch and merge latest posts from Pawchive and cum.st.
+    """Fetch and merge latest posts from Patreon, cum.st, and Pawchive.
 
-    Pawchive provides primary post archives. If a chapter appears on cum.st first,
-    it is extracted and unified into the feed candidates without duplication.
+    Source priority is Patreon, then cum.st, then Pawchive: a post body is
+    never replaced by a slower archive once a higher-priority source supplied
+    it.  Later sources only add posts the earlier ones lack.
 
     Args:
         session: Active requests HTTP session.
         creator_id: Pawchive creator user ID.
         campaign_id: Optional Patreon/cum.st campaign ID.
         title_filter: Compiled title pattern the feed publishes.
+        patreon_session: Authenticated Patreon session, or None to skip the
+            direct source.
 
     Returns:
         List of posts whose titles match the feed pattern, sorted newest first,
@@ -449,7 +695,14 @@ def collect_posts(
     """
     posts_by_id: dict[str, dict] = {}
 
-    # Query cum.st first if campaign ID is configured.
+    # Direct Patreon posts arrive first and keep their bodies.
+    if patreon_session is not None and campaign_id:
+        for post in collect_patreon_posts(
+            patreon_session, campaign_id, creator_id
+        ):
+            posts_by_id.setdefault(post["id"], post)
+
+    # cum.st is the middle fallback.
     if campaign_id:
         cumst_url = f"{CUMST_API_BASE}/patreon/user/{campaign_id}/posts?limit={ITEM_LIMIT}"
         try:
@@ -458,7 +711,7 @@ def collect_posts(
             for item in cumst_items:
                 pid = str(item.get("id") or "")
                 body = item.get("captionHtml") or item.get("caption") or ""
-                if not pid or not body:
+                if not pid or not body or pid in posts_by_id:
                     continue
 
                 posts_by_id[pid] = {
@@ -483,14 +736,18 @@ def collect_posts(
                     continue
 
                 pid = str(post["id"])
-                existing_entry = posts_by_id.get(pid, {})
-                post_content = post.get("content") or existing_entry.get("content") or ""
+                retained = posts_by_id.get(pid)
+                if retained is not None:
+                    # A slower archive never overwrites a higher-priority body.
+                    if not retained.get("content"):
+                        retained["content"] = str(post.get("content") or "")
+                    continue
 
                 posts_by_id[pid] = {
                     "id": pid,
-                    "title": str(post.get("title") or existing_entry.get("title") or "Untitled"),
+                    "title": str(post.get("title") or "Untitled"),
                     "published": parse_date(post.get("published") or post.get("added")),
-                    "content": post_content,
+                    "content": str(post.get("content") or ""),
                     "user": creator_id,
                     "service": "patreon",
                     "url": post.get("url") or f"{PATREON_BASE}/posts/{pid}",
@@ -501,10 +758,15 @@ def collect_posts(
         if not posts_by_id:
             raise
 
+    # Drop posts without a body so an empty item never reaches the feed.
+    candidates = [
+        post for post in posts_by_id.values() if str(post.get("content") or "").strip()
+    ]
+
     # Drop non-matching titles, sort descending by publication date, retain top slice.
     posts = [
         post
-        for post in posts_by_id.values()
+        for post in candidates
         if matches_title_filter(str(post.get("title") or ""), title_filter)
     ]
     posts.sort(
@@ -570,7 +832,10 @@ def build_feed_xml(feed: dict, name: str, items: dict[str, tuple[dt.datetime, st
     # Build channel metadata and optional self-referencing atom:link header.
     creator_url = f"{BASE}/patreon/user/{feed['creator_id']}"
     title = feed_title(feed) or f"{name} — Pawchive"
-    description = f"Unofficial full-text feed for {title} archived by Pawchive."
+    description = (
+        f"Unofficial full-text feed for {title}: Patreon first, "
+        "with Pawchive and cum.st as fallback."
+    )
     self_url = f"{SITE_BASE_URL}/{feed['key']}/feed.xml" if SITE_BASE_URL else None
 
     return rss.build_feed_document(
@@ -599,7 +864,10 @@ def write_feed(feed: dict, name: str, xml: str, count: int) -> None:
         xml,
         title=title,
         page_suffix="Pawchive RSS",
-        description="Unofficial full-text feed generated from the Pawchive API.",
+        description=(
+            "Unofficial full-text feed generated from Patreon, "
+            "with Pawchive and cum.st fallback."
+        ),
         count=count,
     )
 
@@ -983,6 +1251,7 @@ def run_feed(
     session: requests.Session,
     feed: dict,
     sync_mode: SyncMode = SyncMode.SYNC_PATREON,
+    patreon_session: requests.Session | None = None,
 ) -> int:
     """Execute complete feed build, merge, and synchronization pipeline for a creator.
 
@@ -990,6 +1259,8 @@ def run_feed(
         session: Active HTTP session.
         feed: Feed configuration dictionary.
         sync_mode: SyncMode indicating whether to check Patreon after building feed.
+        patreon_session: Authenticated Patreon session for direct chapter bodies,
+            or None to read bodies from cum.st and Pawchive only.
 
     Returns:
         Number of items retained in the final feed.
@@ -997,13 +1268,14 @@ def run_feed(
     name = feed["fallback_name"]
     print(f"[{feed['key']}] {feed_title(feed) or name}")
 
-    # Load existing historical items and fetch latest creator posts from Pawchive.
+    # Load existing historical items and fetch latest creator posts from all sources.
     existing = load_existing(session, feed)
     posts = collect_posts(
         session,
         feed["creator_id"],
         feed.get("campaign_id"),
         title_filter=title_filter_for(feed),
+        patreon_session=patreon_session,
     )
 
     # Merge new posts into historical collection and write feed artifacts.
@@ -1124,6 +1396,22 @@ def main(argv: list[str] | None = None) -> int:
     if pruned:
         print(f"Pruned untracked Pawchive feed(s): {', '.join(pruned)}")
 
+    # Establish the direct Patreon source once for every configured feed.
+    patreon_session = None
+    if not PATREON_COOKIE:
+        print("[patreon] PATREON_COOKIE not set; using Pawchive/cum.st only")
+    else:
+        candidate = make_patreon_session()
+        if check_patreon_auth(candidate):
+            patreon_session = candidate
+            print("[patreon] authenticated; chapters publish straight from Patreon")
+        else:
+            print(
+                "::warning title=Patreon cookie rejected::"
+                "PATREON_COOKIE is expired or revoked; falling back to Pawchive/cum.st. "
+                "Refresh the secret to restore direct publishing."
+            )
+
     # Execute feed generation for all configured creators.
     sync_mode = (
         SyncMode.SKIP_PATREON
@@ -1131,7 +1419,9 @@ def main(argv: list[str] | None = None) -> int:
         else SyncMode.SYNC_PATREON
     )
     counts = {
-        feed["key"]: run_feed(session, feed, sync_mode=sync_mode)
+        feed["key"]: run_feed(
+            session, feed, sync_mode=sync_mode, patreon_session=patreon_session
+        )
         for feed in FEEDS
     }
 

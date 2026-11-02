@@ -8,36 +8,74 @@ RSS rendering, merge/eviction, feed writing, and pruning) lives in
 
 ## Pawchive Patreon feeds
 
-`pawchive_feed.py` publishes full-text RSS 2.0 feeds for selected Patreon creators
-archived by Pawchive:
+`pawchive_feed.py` publishes full-text RSS 2.0 feeds for selected Patreon creators:
 
 | Feed | Novel | Creator / Author | GitHub Pages |
 |------|-------|------------------|--------------|
 | cerim/hdt | Hell Difficulty Tutorial | Patreon `31891971` (Cerim) | [feed.xml](https://jumpingpony.github.io/misc_feed/cerim/hdt/feed.xml) |
 
-Post discovery and complete post objects come from the
-[Pawchive v1 API](https://pawchive.pw/api/schema). Chapter extraction uses the
-same post-content field and unknown-tag handling as WebToEpub's
-`PawchiveParser`, then removes Patreon previous/next navigation and attachments.
-Author notes, their links, and separators remain part of the chapter. The
-remaining chapter HTML is stored in each item's `<content:encoded>` element.
+Chapter bodies come from Patreon's web API first. A patron session cookie
+(`PATREON_COOKIE`) authenticates the account, and every post the account can
+read in full is rendered as soon as Patreon publishes it. cum.st and Pawchive
+remain fallbacks: a post the direct source cannot serve is taken from cum.st,
+then from Pawchive, and a slower archive never replaces a direct body.
+
+Patreon publishes a post roughly three hours before Pawchive's archive ingests
+it, so the direct source is what keeps the feed current. Chapter extraction
+uses the same HTML and unknown-tag handling as WebToEpub's `PawchiveParser`,
+then removes Patreon previous/next navigation and attachments. Author notes,
+their links, and separators remain part of the chapter. The remaining chapter
+HTML is stored in each item's `<content:encoded>` element.
 
 Each feed retains the 30 newest chapter posts. A per-feed title pattern decides
 what counts as a chapter: `cerim/hdt` keeps titles containing "chapter", so
 polls, art posts, and announcements are dropped. Pawchive enforces 50-result API
 pages, so the builder requests only the first page for each creator. It loads the
-published
-RSS first, renders only absent posts whose publication time is newer than the
-newest retained item, merges them by permalink, and trims the oldest items only
+published RSS first, renders only absent posts whose publication time is newer than the
+newest retained item, merges them by canonical Patreon post ID, and trims the oldest items only
 after merging. It does not crawl listing HTML or fetch individual post pages.
 
-### Post Arrival Schedule & Patreon Sync
+### Post arrival schedule and release watch
 
-For `cerim/hdt` (Patreon `31891971`):
+For `cerim/hdt` (Patreon `31891971`), measured over 49 chapters from August to
+November 2026:
+
 - **Active Schedule**: 5 days a week (**Sunday through Thursday**).
-- **Publication Times**: Typically between **08:00 – 09:30 UTC** (**13:30 – 15:00 IST**), averaging around **08:35 UTC / 14:05 IST**.
+- **Publication Times**: **10:23 – 10:59 Europe/Berlin**, with occasional
+  earlier releases (09:13 was the earliest seen). That is 08:23 – 08:59 UTC
+  during CEST and 09:23 – 09:59 UTC during CET.
 
-During each build run (scheduled every 6 hours at 00:25 / 06:25 / 12:25 / 18:25 UTC, 05:55 / 11:55 / 17:55 / 23:55 IST), `pawchive_feed.py` automatically checks Patreon's public API for newly published posts. If a newer post exists on Patreon that has not yet been ingested by Pawchive, it performs a **polite check-before-set** re-import request:
+GitHub's scheduler does not fire on time: scheduled runs are routinely delayed
+5–30 minutes. The workflow therefore starts `patreon_watch.py` once a day at
+06:45 UTC (08:45 CEST / 07:45 CET). The watcher sleeps until **08:50 local**,
+polls Patreon post metadata every four minutes, and reports `found=true` as
+soon as the newest chapter is missing from the published feed. The build job
+then rebuilds and deploys, normally within five minutes of publication. The
+watcher reads only public metadata and needs no credential.
+
+The six-hourly builds remain as a backstop for the other feeds and for any day
+the watcher cannot run.
+
+### Patreon session cookie
+
+Create the repository secret once:
+
+```bash
+gh secret set PATREON_COOKIE
+```
+
+Paste the full `Cookie` request header from a logged-in Patreon session
+(DevTools → Network → XHR → a `posts` request → Request Headers → Cookie).
+A bare `session_id` value also works. The workflow passes the secret only to
+the feed-build step; the watcher never receives it.
+
+When Patreon rejects the cookie, the build prints a `Patreon cookie rejected`
+warning annotation and falls back to cum.st/Pawchive. Refresh the secret after
+signing out of Patreon, changing the password, or when that warning appears.
+
+During each build run, `pawchive_feed.py` also checks Patreon's public API for
+newly published posts. If a newer post exists on Patreon that Pawchive has not
+ingested yet, it performs a **polite check-before-set** re-import request:
 1. Queries `GET /api/v1/patreon/user/{creator_id}/post/{post_id}/flag`.
 2. If already flagged, it skips politely without making write requests.
 3. If unflagged, it sends `POST /api/v1/patreon/user/{creator_id}/post/{post_id}/flag` using the session cookie.
@@ -46,7 +84,12 @@ During each build run (scheduled every 6 hours at 00:25 / 06:25 / 12:25 / 18:25 
 
 ```bash
 python3 -m pip install -r requirements.txt
+
+# Optional: read chapter bodies straight from Patreon.
+export PATREON_COOKIE='session_id=...'
+
 python3 pawchive_feed.py
+python3 patreon_watch.py --once   # one metadata check, no waiting
 ```
 
 ### CLI Flagging Utilities
@@ -83,10 +126,13 @@ Output:
 | `PAWCHIVE_OUT_DIR` | `public` | Generated output directory |
 | `PAWCHIVE_SITE_BASE_URL` | unset | Deployed site root used for RSS self-links |
 | `PAWCHIVE_SESSION` | hardcoded session | Pawchive login session cookie used for authenticated flag requests |
+| `PATREON_COOKIE` | unset | Patreon `Cookie` header for the patron account; set as the `PATREON_COOKIE` repository secret |
+| `PATREON_WATCH_INTERVAL` | `240` | Seconds between watcher polls inside the release window |
 
-The GitHub Actions workflow runs every 6 hours (00:25, 06:25, 12:25 and
-18:25 UTC), on pushes to `main` that touch the builders, and on demand, then
-deploys `public/` to GitHub Pages.
+The GitHub Actions workflow builds every 6 hours (00:25, 06:25, 12:25 and
+18:25 UTC), once a day before the release window (06:45 UTC, with the watcher
+waiting for 08:50 Europe/Berlin), on pushes to `main` that touch the builders,
+and on demand, then deploys `public/` to GitHub Pages.
 Importable feed collections are available in `OPML/`.
 
 ## Royal Road fiction feeds
@@ -165,7 +211,9 @@ never publishes a partial feed. A failed catalogue request is retried after
 ## Caveats
 
 - The project is unofficial and unaffiliated with Pawchive or Patreon.
-- Feed availability depends on Pawchive's API and archive contents.
+- Feed availability depends on Patreon's web API and Pawchive's archive contents.
+- The Patreon session cookie expires when the account signs out or Patreon
+  revokes it; the build then falls back to cum.st/Pawchive and logs a warning.
 - Posts are published only when their titles match the feed's pattern; a
   chapter whose title breaks the pattern is dropped.
 - The Royal Road feed depends on its syndication and chapter-page structures;

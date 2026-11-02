@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from email.utils import format_datetime
 from http import HTTPStatus
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -307,6 +308,143 @@ class PawchiveFeedTests(unittest.TestCase):
             dt.datetime(2026, 8, 20, 8, 44, 47, tzinfo=dt.timezone.utc),
             posts[0]["published"],
         )
+
+    def test_normalize_patreon_cookie(self):
+        # Verify bare session IDs and full DevTools values become one header.
+        self.assertEqual(
+            "session_id=abc", feed.normalize_patreon_cookie("abc")
+        )
+        self.assertEqual(
+            "session_id=abc; other=1",
+            feed.normalize_patreon_cookie("cookie: session_id=abc; other=1"),
+        )
+
+    def test_patreon_candidate_requires_readable_post(self):
+        # Verify locked posts and empty bodies are skipped, not published as teasers.
+        locked = {
+            "id": "500",
+            "attributes": {
+                "title": "Chapter 500",
+                "published_at": "2026-11-02T09:57:09.000+00:00",
+                "current_user_can_view": False,
+                "content": "<p>hidden</p>",
+            },
+        }
+        self.assertIsNone(feed.patreon_post_candidate(locked, "31891971"))
+
+        readable = {
+            "id": "500",
+            "attributes": {
+                "title": "Chapter 500",
+                "published_at": "2026-11-02T09:57:09.000+00:00",
+                "current_user_can_view": True,
+                "content": "<p>the chapter</p>",
+            },
+        }
+        candidate = feed.patreon_post_candidate(readable, "31891971")
+        self.assertIsNotNone(candidate)
+        self.assertEqual("<p>the chapter</p>", candidate["content"])
+        self.assertEqual(
+            "https://www.patreon.com/posts/500", candidate["url"]
+        )
+
+    def test_patreon_json_body_fallback(self):
+        # Verify ProseMirror JSON bodies render to the HTML the sanitizer expects.
+        raw = {
+            "type": "doc",
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [
+                        {"type": "text", "text": "Hello "},
+                        {
+                            "type": "text",
+                            "text": "bold",
+                            "marks": [{"type": "bold"}],
+                        },
+                    ],
+                },
+                {
+                    "type": "bullet_list",
+                    "content": [
+                        {
+                            "type": "list_item",
+                            "content": [
+                                {
+                                    "type": "paragraph",
+                                    "content": [{"type": "text", "text": "one"}],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+        rendered = feed.content_json_to_html(json.dumps(raw))
+        self.assertEqual(
+            "<p>Hello <strong>bold</strong></p><ul><li><p>one</p></li></ul>",
+            rendered,
+        )
+
+    def test_patreon_body_wins_over_archives(self):
+        # Verify a slower archive never replaces the direct Patreon body.
+        patreon_post = {
+            "id": "500",
+            "title": "Chapter 500",
+            "published": "2026-11-02T09:57:09",
+            "content": "<p>from patreon</p>",
+        }
+        pawchive_post = {
+            "id": "500",
+            "title": "Chapter 500",
+            "published": "2026-11-02T09:57:09",
+            "content": "<p>from pawchive</p>",
+        }
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK, json=lambda: [pawchive_post]
+        )
+
+        with patch.object(
+            feed, "collect_patreon_posts", return_value=[patreon_post]
+        ):
+            posts = feed.collect_posts(
+                session,
+                "31891971",
+                "10143762",
+                title_filter=feed.title_filter_for(feed.FEEDS[0]),
+                patreon_session=Mock(),
+            )
+
+        self.assertEqual(1, len(posts))
+        self.assertEqual("<p>from patreon</p>", posts[0]["content"])
+
+    def test_patreon_failure_falls_back(self):
+        # Verify an API failure leaves the archive path untouched.
+        pawchive_post = {
+            "id": "500",
+            "title": "Chapter 500",
+            "published": "2026-11-02T09:57:09",
+            "content": "<p>from pawchive</p>",
+        }
+        session = Mock()
+        session.get.return_value = Mock(
+            status_code=HTTPStatus.OK, json=lambda: [pawchive_post]
+        )
+
+        with patch.object(
+            feed, "fetch_patreon_posts", side_effect=RuntimeError("blocked")
+        ):
+            posts = feed.collect_posts(
+                session,
+                "31891971",
+                "10143762",
+                title_filter=feed.title_filter_for(feed.FEEDS[0]),
+                patreon_session=Mock(),
+            )
+
+        self.assertEqual(1, len(posts))
+        self.assertEqual("<p>from pawchive</p>", posts[0]["content"])
 
     def test_sync_flags_newer_only(self):
         # Verify sync only flags posts published after newest retained date.
