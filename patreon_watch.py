@@ -32,11 +32,12 @@ from pawchive_feed import (
 
 UTC = dt.timezone.utc
 
-# Cerim publishes at 10:23-10:59 Europe/Berlin, with rare earlier releases.
+# Cerim publishes at 10:23-10:59 Europe/Berlin, Sunday through Thursday.
 WINDOW_START = dt.time(8, 50)
 WINDOW_END = dt.time(11, 5)
 POLL_INTERVAL = 240
 RECENT_POSTS = 5
+DEFAULT_RELEASE_DAYS = "0,1,2,3,6"  # Monday-Thursday and Sunday
 
 
 def last_sunday(year: int, month: int) -> dt.date:
@@ -65,8 +66,8 @@ def release_window(now: dt.datetime) -> tuple[dt.datetime, dt.datetime]:
     return start, end
 
 
-def published_post_ids(session, feed: dict) -> set[str] | None:
-    """Collect post IDs already present in the local or deployed feed."""
+def published_posts(session, feed: dict) -> dict[str, dt.datetime] | None:
+    """Map post IDs already present in the local or deployed feed to their dates."""
     documents = rss.load_feed_documents(
         session,
         out_dir=OUT_DIR,
@@ -79,16 +80,35 @@ def published_post_ids(session, feed: dict) -> set[str] | None:
         return None
 
     pattern = title_filter_for(feed)
-    post_ids: set[str] = set()
+    posts: dict[str, dt.datetime] = {}
 
     # Identities are canonical Patreon permalinks; only the numeric ID matters.
     for document in documents:
-        for identity in parse_existing_items(document.decode("utf-8-sig"), pattern):
+        parsed = parse_existing_items(document.decode("utf-8-sig"), pattern)
+        for identity, (published, _) in parsed.items():
             post_id = extract_post_id(identity)
             if post_id:
-                post_ids.add(post_id)
+                posts[post_id] = published
 
-    return post_ids
+    return posts
+
+
+def parse_release_days(raw: str) -> set[int]:
+    """Parse a comma-separated weekday list (Monday=0) into a set."""
+    days: set[int] = set()
+
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            day = int(chunk)
+        except ValueError:
+            continue
+        if 0 <= day <= 6:
+            days.add(day)
+
+    return days or {0, 1, 2, 3, 6}
 
 
 def newest_chapter(session, feed: dict) -> dict | None:
@@ -115,13 +135,21 @@ def has_new_chapter(session, feed: dict) -> bool:
         print(f"  [watch] {feed['key']}: no chapter post found")
         return False
 
-    known = published_post_ids(session, feed)
+    known = published_posts(session, feed)
     if known is None:
         print(f"  [watch] {feed['key']}: published feed unavailable; building once")
         return True
 
     if chapter["id"] in known:
         print(f"  [watch] {feed['key']}: newest chapter {chapter['id']} already published")
+        return False
+
+    # One scheduled chapter per day: stop as soon as today's is in the feed.
+    now = dt.datetime.now(UTC)
+    offset = dt.timedelta(hours=berlin_offset(now))
+    today = (now + offset).date()
+    if any((published + offset).date() == today for published in known.values()):
+        print(f"  [watch] {feed['key']}: today's chapter is already uploaded; stopping")
         return False
 
     print(
@@ -161,6 +189,18 @@ def main(argv: list[str] | None = None) -> int:
     opts = parser.parse_args(argv)
 
     now = dt.datetime.now(UTC)
+    offset = dt.timedelta(hours=berlin_offset(now))
+    local_now = now + offset
+
+    # Cerim publishes Sunday through Thursday; skip Friday and Saturday.
+    release_days = parse_release_days(
+        os.environ.get("PATREON_WATCH_DAYS", DEFAULT_RELEASE_DAYS)
+    )
+    if not opts.once and local_now.weekday() not in release_days:
+        print(f"[watch] {local_now:%A} is outside the release schedule; stopping")
+        set_output("found", "false")
+        return 0
+
     start, end = release_window(now)
     print(f"[watch] window {start:%Y-%m-%d %H:%M} - {end:%H:%M} UTC")
 
@@ -175,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     while True:
         for feed in FEEDS:
             if has_new_chapter(session, feed):
+                print("[watch] chapter found; stopping polls")
                 set_output("found", "true")
                 return 0
 

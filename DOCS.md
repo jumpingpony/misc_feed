@@ -47,11 +47,22 @@ November 2026:
 
 GitHub's scheduler does not fire on time: scheduled runs are routinely delayed
 5–30 minutes. The workflow therefore starts `patreon_watch.py` once a day at
-06:45 UTC (08:45 CEST / 07:45 CET). The watcher sleeps until **08:50 local**,
-polls Patreon post metadata every four minutes, and reports `found=true` as
-soon as the newest chapter is missing from the published feed. The build job
-then rebuilds and deploys, normally within five minutes of publication. The
-watcher reads only public metadata and needs no credential.
+06:45 UTC (08:45 CEST / 07:45 CET). The watcher:
+
+- exits at once on Friday and Saturday, which are outside Cerim's Sunday–Thursday schedule;
+- sleeps until **08:50 Europe/Berlin**;
+- polls Patreon post metadata every four minutes;
+- stops as soon as the newest chapter is missing from the published feed, or when today's chapter is already uploaded (one scheduled chapter per day).
+
+The build job then rebuilds and deploys, normally within five minutes of
+publication. The watcher reads only public metadata and needs no credential.
+
+Daylight saving is handled explicitly: the window is defined in Europe/Berlin
+and converted with the EU rules (summer time starts the last Sunday of March at
+01:00 UTC and ends the last Sunday of October at 01:00 UTC). The UTC window is
+therefore 06:50–09:05 in summer and 07:50–10:05 in winter, and it moves on the
+transition days without a code change. The 06:45 UTC start is always after the
+01:00 UTC switch, so the same day's offset is already the new one.
 
 The six-hourly builds remain as a backstop for the other feeds and for any day
 the watcher cannot run.
@@ -132,6 +143,7 @@ Output:
 | `PAWCHIVE_SESSION` | hardcoded session | Pawchive login session cookie used for authenticated flag requests |
 | `PATREON_COOKIE` | unset | Patreon `Cookie` header for the patron account; set as the `PATREON_COOKIE` repository secret |
 | `PATREON_WATCH_INTERVAL` | `240` | Seconds between watcher polls inside the release window |
+| `PATREON_WATCH_DAYS` | `0,1,2,3,6` | Weekdays with a release (Monday=0); default is Sunday–Thursday |
 
 The GitHub Actions workflow builds every 6 hours (00:25, 06:25, 12:25 and
 18:25 UTC), once a day before the release window (06:45 UTC, with the watcher
