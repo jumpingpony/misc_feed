@@ -2,8 +2,10 @@ name: Build RSS feeds
 
 on:
   schedule:
-    # 05:55, 11:55, 17:55 and 23:55 IST (UTC+5:30), every 6 hours
-    - cron: "25 0,6,12,18 * * *"
+    # 05:55, 11:55, 17:55 and 23:55 IST (UTC+5:30), every 6 hours.
+    # 09:25 and 10:25 UTC are post-window fallbacks: scheduled runs are
+    # best-effort and GitHub sometimes drops the 06:45 watcher entirely.
+    - cron: "25 0,6,9,10,12,18 * * *"
     # Start before the release window: 08:45 CEST / 07:45 CET. The watch job
     # waits for 08:50-11:05 Europe/Berlin itself, so scheduler drift does not
     # make the build late.

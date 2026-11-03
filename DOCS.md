@@ -163,9 +163,10 @@ Output:
 | `PATREON_WATCH_DAYS` | `0,1,2,3,6` | Weekdays with a release (Monday=0); default is Sunday–Thursday |
 
 The GitHub Actions workflow builds every 6 hours (00:25, 06:25, 12:25 and
-18:25 UTC), once a day before the release window (06:45 UTC, with the watcher
-waiting for 08:50 Europe/Berlin), on pushes to `main` that touch the builders,
-and on demand, then deploys `public/` to GitHub Pages.
+18:25 UTC), plus post-window fallbacks at 09:25 and 10:25 UTC, once a day
+before the release window (06:45 UTC, with the watcher waiting for 08:50
+Europe/Berlin), on pushes to `main` that touch the builders, and on demand,
+then deploys `public/` to GitHub Pages.
 Importable feed collections are available in `OPML/`.
 
 ## Royal Road fiction feeds
