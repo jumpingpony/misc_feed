@@ -404,12 +404,33 @@ def prune_untracked_feeds(
         return []
 
     removed: list[str] = []
-    for child in out_dir.iterdir():
-        if child.is_dir() and child.name not in active_keys and is_feed_dir(child):
-            try:
-                shutil.rmtree(child)
-                removed.append(child.name)
-            except OSError as err:
-                print(f"Failed to remove untracked feed directory {child}: {err}")
+
+    # Feed keys are relative paths ("cerim/hdt"), so every directory holding
+    # feed files is a candidate, not only the first level.
+    for child in sorted(
+        out_dir.rglob("*"), key=lambda path: len(path.parts), reverse=True
+    ):
+        if not child.is_dir() or not is_feed_dir(child):
+            continue
+
+        key = child.relative_to(out_dir).as_posix()
+        if key in active_keys:
+            continue
+
+        try:
+            shutil.rmtree(child)
+        except OSError as err:
+            print(f"Failed to remove untracked feed directory {child}: {err}")
+            continue
+
+        removed.append(key)
+        remove_empty_parents(child.parent, out_dir)
 
     return sorted(removed)
+
+
+def remove_empty_parents(path: Path, root: Path) -> None:
+    """Delete folders left empty after a feed directory is pruned."""
+    while path != root and path.is_dir() and not any(path.iterdir()):
+        path.rmdir()
+        path = path.parent

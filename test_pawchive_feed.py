@@ -536,8 +536,8 @@ class PawchiveFeedTests(unittest.TestCase):
         # Verify untracked Pawchive directories are pruned while retaining others.
         with tempfile.TemporaryDirectory() as tmpdir:
             out_dir = Path(tmpdir)
-            active_dir = out_dir / "cerim"
-            active_dir.mkdir()
+            active_dir = out_dir / "cerim" / "hdt"
+            active_dir.mkdir(parents=True)
             (active_dir / "feed.xml").write_text(
                 "<rss><channel><title>cerim — Pawchive</title>"
                 "<link>https://pawchive.pw</link></channel></rss>"
@@ -550,6 +550,14 @@ class PawchiveFeedTests(unittest.TestCase):
                 "<link>https://pawchive.pw</link></channel></rss>"
             )
 
+            # Nested keys must be pruned too, along with their emptied parent.
+            untracked_nested = out_dir / "retired" / "serial"
+            untracked_nested.mkdir(parents=True)
+            (untracked_nested / "feed.xml").write_text(
+                "<rss><channel><title>serial — Pawchive</title>"
+                "<link>https://pawchive.pw</link></channel></rss>"
+            )
+
             other_dir = out_dir / "zenith-of-sorcery"
             other_dir.mkdir()
             (other_dir / "feed.xml").write_text(
@@ -558,10 +566,12 @@ class PawchiveFeedTests(unittest.TestCase):
             )
 
             # Prune directories not in active keys.
-            pruned = feed.prune_untracked_feeds(out_dir, {"cerim"})
-            self.assertEqual(["old-feed"], pruned)
+            pruned = feed.prune_untracked_feeds(out_dir, {"cerim/hdt"})
+            self.assertEqual(["old-feed", "retired/serial"], pruned)
             self.assertTrue(active_dir.exists())
             self.assertFalse(untracked_pawchive.exists())
+            self.assertFalse(untracked_nested.exists())
+            self.assertFalse((out_dir / "retired").exists())
             self.assertTrue(other_dir.exists())
 
     def test_parse_date_numeric(self):
