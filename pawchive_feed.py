@@ -59,8 +59,6 @@ FEEDS = [
         "title": "Hell Difficulty Tutorial",
         "author": "Cerim",
         "title_filter": "chapter",
-        # The release watcher runs on Cerim's schedule only.
-        "watch": True,
     },
     {
         "key": "voidherald/hr",

@@ -5,21 +5,11 @@ on:
     # Hourly at :25. GitHub delays or drops scheduled runs often, so a denser
     # cadence bounds how long a new chapter waits for a deploy.
     - cron: "25 * * * *"
-    # Start before the release window: 08:45 CEST / 07:45 CET. The watch job
-    # waits for 08:50-11:05 Europe/Berlin itself, so scheduler drift does not
-    # make the build late.
-    - cron: "45 6 * * *"
   workflow_dispatch:
-    inputs:
-      watch:
-        description: "Run the release watcher instead of a build"
-        type: boolean
-        default: false
   push:
     branches: [main]
     paths:
       - pawchive_feed.py
-      - patreon_watch.py
       - royalroad_feed.py
       - epublibre_feed.py
       - rss_common.py
@@ -33,34 +23,7 @@ permissions:
   issues: write
 
 jobs:
-  watch:
-    # Daily pre-window run, or a manual watcher test; every other trigger
-    # goes straight to build.
-    if: (github.event_name == 'schedule' && github.event.schedule == '45 6 * * *') || (github.event_name == 'workflow_dispatch' && inputs.watch)
-    runs-on: ubuntu-latest
-    outputs:
-      found: ${{ steps.poll.outputs.found }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-          cache: pip
-      - run: pip install -r requirements.txt
-      - name: Configure Pages
-        id: pages
-        uses: actions/configure-pages@v6
-      - name: Watch for the new chapter
-        id: poll
-        env:
-          PAWCHIVE_SITE_BASE_URL: "${{ steps.pages.outputs.base_url }}"
-        run: python patreon_watch.py
-
   build:
-    needs: [watch]
-    # Build on every trigger except a watch run that found nothing. A failed
-    # watch falls through to a normal build instead of dropping the day.
-    if: always() && (needs.watch.result != 'success' || needs.watch.outputs.found == 'true')
     runs-on: ubuntu-latest
     concurrency:
       group: pages
