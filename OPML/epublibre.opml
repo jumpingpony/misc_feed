@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>ePubLibre English additions (unofficial)</title>
+  </head>
+  <body>
+    <outline text="ePubLibre - new English books" title="ePubLibre - new English books" type="rss" xmlUrl="https://jumpingpony.github.io/misc_feed/epublibre/en/feed.xml" htmlUrl="https://www.epublibre.org/catalogo/index/1/nuevo/todos/sin/5"/>
+  </body>
+</opml>
