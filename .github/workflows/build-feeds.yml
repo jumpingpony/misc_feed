@@ -19,6 +19,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read
 
 jobs:
   build:
@@ -49,9 +50,40 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # deploy-pages makes a single, unretried list-artifacts call, so a run that
+      # reaches it before the upload is visible in the artifacts API fails with
+      # "No artifacts named github-pages were found". Its own job gives some lag;
+      # poll to make the handoff deterministic.
+      - name: Wait for pages artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 60); do
+            if gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+                 --jq '.artifacts[].name' | grep -qx 'github-pages'; then
+              echo "pages artifact visible after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::pages artifact never became visible"
+          exit 1
       # deploy-pages@v5 still bundles a dependency that imports Node's removed
       # punycode API (actions/deploy-pages#434). Suppress that action-internal
       # deprecation until upstream publishes a fixed release.
-      - uses: actions/deploy-pages@v5
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
         env:
           NODE_OPTIONS: --no-deprecation
